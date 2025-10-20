@@ -13,6 +13,7 @@ provides on overview of Headscale's feature and compatibility with the Tailscale
     - [x] [Global and restricted nameservers (split DNS)](https://tailscale.com/kb/1054/dns#nameservers)
     - [x] [search domains](https://tailscale.com/kb/1054/dns#search-domains)
     - [x] [Extra DNS records (Headscale only)](../ref/dns.md#setting-extra-dns-records)
+    - [x] [Wildcard DNS resolution (Headscale only)](../ref/dns.md#wildcard-dns-resolution)
 - [x] [Taildrop (File Sharing)](https://tailscale.com/kb/1106/taildrop)
 - [x] [Routes](../ref/routes.md)
     - [x] [Subnet routers](../ref/routes.md#subnet-router)

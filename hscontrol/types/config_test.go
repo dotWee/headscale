@@ -467,3 +467,78 @@ func TestSafeServerURL(t *testing.T) {
 		})
 	}
 }
+
+func TestWildcardDNSConfiguration(t *testing.T) {
+	tests := []struct {
+		name       string
+		dnsConfig  DNSConfig
+		wantRoutes map[string][]*dnstype.Resolver
+	}{
+		{
+			name: "wildcard DNS enabled adds route",
+			dnsConfig: DNSConfig{
+				MagicDNS:    true,
+				BaseDomain:  "example.com",
+				WildcardDNS: true,
+			},
+			wantRoutes: map[string][]*dnstype.Resolver{
+				"*.example.com": nil,
+			},
+		},
+		{
+			name: "wildcard DNS disabled does not add route",
+			dnsConfig: DNSConfig{
+				MagicDNS:    true,
+				BaseDomain:  "example.com",
+				WildcardDNS: false,
+			},
+			wantRoutes: nil,
+		},
+		{
+			name: "no base domain does not add route",
+			dnsConfig: DNSConfig{
+				MagicDNS:    false,
+				BaseDomain:  "",
+				WildcardDNS: true,
+			},
+			wantRoutes: nil,
+		},
+		{
+			name: "MagicDNS disabled does not add route",
+			dnsConfig: DNSConfig{
+				MagicDNS:    false,
+				BaseDomain:  "example.com",
+				WildcardDNS: true,
+			},
+			wantRoutes: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := dnsToTailcfgDNS(tt.dnsConfig)
+
+			if tt.wantRoutes == nil {
+				if result.Routes != nil {
+					// Check if wildcard route exists
+					if _, exists := result.Routes["*.example.com"]; exists {
+						t.Errorf("expected no wildcard route but found one")
+					}
+				}
+			} else {
+				if result.Routes == nil {
+					t.Errorf("expected wildcard route but got nil routes")
+					return
+				}
+
+				for route, resolvers := range tt.wantRoutes {
+					if foundResolvers, exists := result.Routes[route]; !exists {
+						t.Errorf("expected route %q not found in result", route)
+					} else if len(foundResolvers) != len(resolvers) {
+						t.Errorf("expected %d resolvers for route %q, got %d", len(resolvers), route, len(foundResolvers))
+					}
+				}
+			}
+		})
+	}
+}

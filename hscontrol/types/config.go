@@ -108,6 +108,9 @@ type DNSConfig struct {
 	SearchDomains    []string            `mapstructure:"search_domains"`
 	ExtraRecords     []tailcfg.DNSRecord `mapstructure:"extra_records"`
 	ExtraRecordsPath string              `mapstructure:"extra_records_path"`
+
+	// WildcardDNS enables wildcard DNS resolution for *.base_domain queries
+	WildcardDNS bool `mapstructure:"wildcard_dns"`
 }
 
 type Nameservers struct {
@@ -340,11 +343,11 @@ func LoadConfig(path string, isFile bool) error {
 	viper.SetDefault("prefixes.allocation", string(IPAllocationStrategySequential))
 
 	if err := viper.ReadInConfig(); err != nil {
-    	if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-        	log.Warn().Msg("No config file found, using defaults")
-        	return nil
-    	}
-    	
+		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+			log.Warn().Msg("No config file found, using defaults")
+			return nil
+		}
+
 		return fmt.Errorf("fatal error reading config file: %w", err)
 	}
 
@@ -758,6 +761,16 @@ func dnsToTailcfgDNS(dns DNSConfig) *tailcfg.DNSConfig {
 		cfg.Domains = []string{dns.BaseDomain}
 	}
 	cfg.Domains = append(cfg.Domains, dns.SearchDomains...)
+
+	// Add wildcard DNS routes if enabled and MagicDNS is also enabled
+	if dns.WildcardDNS && dns.BaseDomain != "" && dns.MagicDNS {
+		if cfg.Routes == nil {
+			cfg.Routes = make(map[string][]*dnstype.Resolver)
+		}
+		// Route wildcard queries to be handled by the control server
+		// The actual resolution will happen in the mapper when generating DNS config
+		cfg.Routes["*."+dns.BaseDomain] = nil
+	}
 
 	return &cfg
 }

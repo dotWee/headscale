@@ -277,6 +277,11 @@ dns:
   # `hostname.base_domain` (e.g., _myhost.example.com_).
   base_domain: example.com
 
+  # Whether to enable wildcard DNS resolution for *.base_domain queries.
+  # This allows accessing nodes by hostname (e.g., node1.example.com) without
+  # knowing their IP addresses. Requires magic_dns and base_domain to be enabled.
+  wildcard_dns: false
+
   # Whether to use the local DNS settings of a node or override the local DNS
   # settings (default) and force the use of Headscale's DNS configuration.
   override_local_dns: true

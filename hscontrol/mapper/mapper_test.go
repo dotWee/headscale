@@ -14,6 +14,7 @@ import (
 	"github.com/juanfont/headscale/hscontrol/types"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/dnstype"
+	"tailscale.com/types/views"
 )
 
 var iap = func(ipStr string) *netip.Addr {
@@ -67,11 +68,19 @@ func TestDNSConfigMapResponse(t *testing.T) {
 
 			nodeInShared1 := mach("test_get_shared_nodes_1", "shared1", 1)
 
+			mockState := &mockState{
+				nodes: types.Nodes{nodeInShared1},
+			}
+
 			got := generateDNSConfig(
 				&types.Config{
 					TailcfgDNSConfig: &dnsConfigOrig,
+					DNSConfig: types.DNSConfig{
+						WildcardDNS: false,
+					},
 				},
 				nodeInShared1.View(),
+				&mockStateWrapper{mockState},
 			)
 
 			if diff := cmp.Diff(tt.want, got, cmpopts.EquateEmpty()); diff != "" {
@@ -88,6 +97,20 @@ type mockState struct {
 	primary *routes.PrimaryRoutes
 	nodes   types.Nodes
 	peers   types.Nodes
+}
+
+// mockStateWrapper wraps mockState to implement StateReader interface
+type mockStateWrapper struct {
+	*mockState
+}
+
+// Implement StateReader interface
+func (m *mockStateWrapper) ListNodes(nodeIDs ...types.NodeID) views.Slice[types.NodeView] {
+	var nodeViews []types.NodeView
+	for _, node := range m.nodes {
+		nodeViews = append(nodeViews, node.View())
+	}
+	return views.SliceOf(nodeViews)
 }
 
 func (m *mockState) DERPMap() *tailcfg.DERPMap {
@@ -113,6 +136,10 @@ func (m *mockState) NodeCanHaveTag(node types.NodeView, tag string) bool {
 		return false
 	}
 	return m.polMan.NodeCanHaveTag(node, tag)
+}
+
+func (m *mockState) Nodes() types.Nodes {
+	return m.nodes
 }
 
 func (m *mockState) GetNodePrimaryRoutes(nodeID types.NodeID) []netip.Prefix {

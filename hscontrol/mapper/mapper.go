@@ -1,6 +1,7 @@
 package mapper
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/juanfont/headscale/hscontrol/dns"
 	"github.com/juanfont/headscale/hscontrol/state"
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/rs/zerolog/log"
@@ -99,6 +101,7 @@ func generateUserProfiles(
 func generateDNSConfig(
 	cfg *types.Config,
 	node types.NodeView,
+	stateReader dns.StateReader,
 ) *tailcfg.DNSConfig {
 	if cfg.TailcfgDNSConfig == nil {
 		return nil
@@ -108,7 +111,55 @@ func generateDNSConfig(
 
 	addNextDNSMetadata(dnsConfig.Resolvers, node)
 
+	// Add wildcard DNS records if enabled
+	if cfg.DNSConfig.WildcardDNS && cfg.DNSConfig.BaseDomain != "" {
+		wildcardResolver := dns.NewWildcardResolver(stateReader, cfg)
+		if wildcardResolver.IsWildcardEnabled() {
+			// Generate wildcard DNS records for all nodes
+			wildcardRecords := generateWildcardDNSRecords(wildcardResolver, stateReader)
+			dnsConfig.ExtraRecords = append(dnsConfig.ExtraRecords, wildcardRecords...)
+		}
+	}
+
 	return dnsConfig
+}
+
+// generateWildcardDNSRecords generates DNS records for all wildcard queries
+func generateWildcardDNSRecords(wildcardResolver *dns.WildcardResolver, stateReader dns.StateReader) []tailcfg.DNSRecord {
+	var allRecords []tailcfg.DNSRecord
+	ctx := context.Background()
+
+	nodes := stateReader.ListNodes()
+	for _, node := range nodes.All() {
+		// Generate wildcard queries for each node
+		hostname := node.Hostname()
+		// Access DNS config through the wildcard resolver
+		dnsConfig := wildcardResolver.GetDNSConfig()
+		baseDomain := dnsConfig.BaseDomain
+
+		// Create wildcard query like hostname.base_domain
+		wildcardQuery := hostname + "." + strings.TrimSuffix(baseDomain, ".")
+
+		// Resolve the wildcard query
+		records, err := wildcardResolver.ResolveWildcardDNS(ctx, wildcardQuery)
+		if err != nil {
+			log.Debug().Err(err).Str("hostname", hostname).Msg("failed to resolve wildcard DNS for node")
+			continue
+		}
+
+		allRecords = append(allRecords, records...)
+	}
+
+	return allRecords
+}
+
+// stateWrapper wraps state.State to implement StateReader
+type stateWrapper struct {
+	state *state.State
+}
+
+func (s *stateWrapper) ListNodes(nodeIDs ...types.NodeID) views.Slice[types.NodeView] {
+	return s.state.ListNodes(nodeIDs...)
 }
 
 // If any nextdns DoH resolvers are present in the list of resolvers it will

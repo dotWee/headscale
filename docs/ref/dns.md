@@ -109,3 +109,52 @@ hostname and port combination "http://hostname-in-magic-dns.myvpn.example.com:30
 
     }
     ```
+
+## Wildcard DNS resolution
+
+Headscale supports wildcard DNS resolution for `*.base_domain` queries, allowing you to access any node in your tailnet by its hostname without knowing its IP address. This feature is built into MagicDNS and requires no additional DNS server setup.
+
+### Enable wildcard DNS
+
+To enable wildcard DNS resolution, add the `wildcard_dns: true` option to your DNS configuration:
+
+```yaml title="config.yaml"
+dns:
+  magic_dns: true
+  base_domain: example.com
+  wildcard_dns: true  # Enable wildcard DNS resolution
+  nameservers:
+    global:
+      - 1.1.1.1
+  search_domains:
+    - example.com
+```
+
+### How it works
+
+When wildcard DNS is enabled:
+
+1. **DNS Queries**: Any query for `*.example.com` (like `node1.example.com`) is intercepted by MagicDNS
+2. **Hostname Resolution**: Headscale extracts the hostname (`node1`) from the wildcard query (`node1.example.com`)
+3. **Node Lookup**: Headscale looks up the node by hostname in its state
+4. **IP Resolution**: Headscale returns A/AAAA records for all IP addresses assigned to that node
+
+### Usage examples
+
+With wildcard DNS enabled, you can access nodes using their hostnames:
+
+- `ssh user@node1.example.com` - Connect to node1 via SSH
+- `ping node2.example.com` - Ping node2
+- `curl http://webserver.example.com` - Access a web service on webserver
+
+### Requirements
+
+- MagicDNS must be enabled (`dns.magic_dns: true`)
+- A base domain must be configured (`dns.base_domain`)
+- Nodes must have hostnames set (this happens automatically during registration)
+
+### Security considerations
+
+- Wildcard DNS respects existing ACL policies
+- Only nodes visible according to ACL rules will be resolvable
+- The feature works within the security model of MagicDNS

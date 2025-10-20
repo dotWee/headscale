@@ -34,3 +34,7 @@ dns:
 
     # you can also put it in one line
     - { name: "prometheus.myvpn.example.com", type: "A", value: "100.64.0.4" }
+
+  # Wildcard DNS allows resolving *.base_domain to node IPs
+  # This enables accessing nodes by hostname without knowing their IP
+  wildcard_dns: true
