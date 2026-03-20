@@ -7,6 +7,8 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -176,6 +178,7 @@ type LetsEncryptConfig struct {
 type ServeConfig struct {
 	Domain string
 	HTTPS  ServeHTTPSConfig
+	Funnel ServeFunnelConfig
 }
 
 type ServeHTTPSConfig struct {
@@ -188,6 +191,11 @@ type ServeDNSConfig struct {
 	TTL      uint32
 	Timeout  time.Duration
 	RFC2136  RFC2136Config
+}
+
+type ServeFunnelConfig struct {
+	Enabled    bool
+	AllowPorts []string
 }
 
 type RFC2136Config struct {
@@ -432,6 +440,8 @@ func LoadConfig(path string, isFile bool) error {
 	viper.SetDefault("serve.https.dns.rfc2136.tsig_key_name", "")
 	viper.SetDefault("serve.https.dns.rfc2136.tsig_secret", "")
 	viper.SetDefault("serve.https.dns.rfc2136.tsig_algorithm", "hmac-sha256.")
+	viper.SetDefault("serve.funnel.enabled", false)
+	viper.SetDefault("serve.funnel.allow_ports", []string{})
 
 	viper.SetDefault("ephemeral_node_inactivity_timeout", "120s")
 
@@ -574,6 +584,19 @@ func validateServerConfig() error {
 		}
 	}
 
+	if viper.GetBool("serve.funnel.enabled") {
+		if !viper.GetBool("serve.https.enabled") {
+			errorText += "Fatal config error: serve.funnel.enabled requires serve.https.enabled\n"
+		}
+
+		ports, err := normalizedServeFunnelPorts(viper.GetStringSlice("serve.funnel.allow_ports"))
+		if err != nil {
+			errorText += fmt.Sprintf("Fatal config error: invalid serve.funnel.allow_ports: %v\n", err)
+		} else if len(ports) == 0 {
+			errorText += "Fatal config error: serve.funnel.allow_ports must be set when serve.funnel.enabled is true\n"
+		}
+	}
+
 	// Validate tuning parameters
 	if size := viper.GetInt("tuning.node_store_batch_size"); size <= 0 {
 		errorText += fmt.Sprintf(
@@ -634,6 +657,10 @@ func serveConfig() ServeConfig {
 					TSIGAlgorithm: viper.GetString("serve.https.dns.rfc2136.tsig_algorithm"),
 				},
 			},
+		},
+		Funnel: ServeFunnelConfig{
+			Enabled:    viper.GetBool("serve.funnel.enabled"),
+			AllowPorts: viper.GetStringSlice("serve.funnel.allow_ports"),
 		},
 	}
 }
@@ -960,6 +987,80 @@ func warnBanner(lines []string) {
 	b.WriteString("################################################################")
 
 	log.Warn().Msg(b.String())
+}
+
+func validateServeFunnelPortSpec(spec string) error {
+	if spec == "" {
+		return errors.New("empty port specification")
+	}
+
+	first, last, hasRange := strings.Cut(spec, "-")
+	parsePort := func(raw string) (uint16, error) {
+		port, err := strconv.ParseUint(raw, 10, 16)
+		if err != nil {
+			return 0, fmt.Errorf("invalid port %q", raw)
+		}
+		if port == 0 {
+			return 0, errors.New("port 0 is not allowed")
+		}
+
+		return uint16(port), nil
+	}
+
+	start, err := parsePort(first)
+	if err != nil {
+		return err
+	}
+	if !hasRange {
+		return nil
+	}
+
+	end, err := parsePort(last)
+	if err != nil {
+		return err
+	}
+	if start > end {
+		return fmt.Errorf("invalid port range %q", spec)
+	}
+
+	return nil
+}
+
+func normalizedServeFunnelPorts(ports []string) ([]string, error) {
+	normalized := make([]string, 0, len(ports))
+	for _, raw := range ports {
+		spec := strings.TrimSpace(raw)
+		if spec == "" {
+			continue
+		}
+		if err := validateServeFunnelPortSpec(spec); err != nil {
+			return nil, err
+		}
+		normalized = append(normalized, spec)
+	}
+
+	slices.Sort(normalized)
+	normalized = slices.Compact(normalized)
+
+	return normalized, nil
+}
+
+func (c ServeFunnelConfig) Capability() (tailcfg.NodeCapability, bool, error) {
+	if !c.Enabled {
+		return "", false, nil
+	}
+
+	ports, err := normalizedServeFunnelPorts(c.AllowPorts)
+	if err != nil {
+		return "", false, err
+	}
+	if len(ports) == 0 {
+		return "", false, errors.New("no funnel ports configured")
+	}
+
+	return tailcfg.NodeCapability(
+		fmt.Sprintf("%s?ports=%s", tailcfg.CapabilityFunnelPorts, strings.Join(ports, ",")),
+	), true, nil
 }
 
 func prefixV4() (*netip.Prefix, bool, error) {

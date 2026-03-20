@@ -1118,6 +1118,16 @@ func (nv NodeView) TailNode(
 	if cfg.Serve.HTTPS.Enabled {
 		capMap[tailcfg.CapabilityHTTPS] = []tailcfg.RawMessage{}
 	}
+	if cfg.Serve.Funnel.Enabled {
+		capMap[tailcfg.NodeAttrFunnel] = []tailcfg.RawMessage{}
+		funnelPortsCap, ok, err := cfg.Serve.Funnel.Capability()
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			capMap[funnelPortsCap] = []tailcfg.RawMessage{}
+		}
+	}
 
 	tNode := tailcfg.Node{
 		//nolint:gosec // G115: NodeID values are within int64 range

@@ -181,7 +181,13 @@ func TestServeFeatureResponse(t *testing.T) {
 	resp, err = serveFeatureResponse(cfg, funnelFeatureName)
 	require.NoError(t, err)
 	assert.False(t, resp.Complete)
-	assert.Contains(t, resp.Text, "not supported")
+	assert.Contains(t, resp.Text, "disabled")
+
+	cfg.Serve.Funnel.Enabled = true
+	cfg.Serve.Funnel.AllowPorts = []string{"443", "8443"}
+	resp, err = serveFeatureResponse(cfg, funnelFeatureName)
+	require.NoError(t, err)
+	assert.True(t, resp.Complete)
 }
 
 func TestValidateServeDNSRequest(t *testing.T) {

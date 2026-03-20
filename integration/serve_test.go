@@ -28,6 +28,7 @@ func TestServeHTTPProxyStatusAndReset(t *testing.T) {
 	env := newServeTestEnv(
 		t,
 		"serve-http-proxy",
+		nil,
 		[]tsic.Option{
 			tsic.WithPackages("python3"),
 		},
@@ -81,6 +82,7 @@ func TestServeTCPPeerReachability(t *testing.T) {
 	env := newServeTestEnv(
 		t,
 		"serve-tcp-peer",
+		nil,
 		[]tsic.Option{
 			tsic.WithPackages("python3"),
 		},
@@ -121,9 +123,66 @@ func TestServeTCPPeerReachability(t *testing.T) {
 	}, 30*time.Second, 500*time.Millisecond, "peer should reach the served TCP endpoint")
 }
 
+func TestFunnelToggleStatus(t *testing.T) {
+	IntegrationSkip(t)
+
+	env := newServeTestEnv(
+		t,
+		"serve-funnel-toggle",
+		[]hsic.Option{
+			hsic.WithConfigEnv(map[string]string{
+				"HEADSCALE_DNS_OVERRIDE_LOCAL_DNS":             "false",
+				"HEADSCALE_SERVE_HTTPS_ENABLED":                "true",
+				"HEADSCALE_SERVE_HTTPS_DNS_PROVIDER":           "rfc2136",
+				"HEADSCALE_SERVE_HTTPS_DNS_RFC2136_NAMESERVER": "127.0.0.1:53",
+				"HEADSCALE_SERVE_HTTPS_DNS_RFC2136_ZONE":       "headscale.net",
+				"HEADSCALE_SERVE_FUNNEL_ENABLED":               "true",
+				"HEADSCALE_SERVE_FUNNEL_ALLOW_PORTS":           "443",
+			}),
+		},
+		[]tsic.Option{
+			tsic.WithPackages("python3"),
+		},
+		nil,
+	)
+
+	_, stderr, err := env.serveNode.Execute([]string{
+		"sh",
+		"-c",
+		"mkdir -p /tmp/serve-funnel && printf 'funnel-ok\\n' >/tmp/serve-funnel/index.html && python3 -m http.server 18082 --bind 127.0.0.1 --directory /tmp/serve-funnel >/tmp/serve-funnel.log 2>&1 &",
+	})
+	require.NoError(t, err, stderr)
+
+	_, stderr, err = env.serveNode.Execute([]string{
+		"tailscale", "funnel", "--bg", "http://127.0.0.1:18082",
+	})
+	require.NoError(t, err, stderr)
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		cfg := readServeStatusWithCollect(c, env.serveNode)
+		hostPort := ipn.HostPort(net.JoinHostPort(env.serveFQDN, "443"))
+		assert.True(c, cfg.AllowFunnel[hostPort])
+		if assert.Contains(c, cfg.TCP, uint16(443)) {
+			assert.True(c, cfg.TCP[443].HTTPS)
+		}
+	}, 30*time.Second, 500*time.Millisecond, "funnel should be enabled for the configured port")
+
+	_, stderr, err = env.serveNode.Execute([]string{
+		"tailscale", "serve", "--bg", "http://127.0.0.1:18082",
+	})
+	require.NoError(t, err, stderr)
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		cfg := readServeStatusWithCollect(c, env.serveNode)
+		hostPort := ipn.HostPort(net.JoinHostPort(env.serveFQDN, "443"))
+		assert.False(c, cfg.AllowFunnel[hostPort])
+	}, 30*time.Second, 500*time.Millisecond, "funnel should be disabled after turning it off")
+}
+
 func newServeTestEnv(
 	t *testing.T,
 	testName string,
+	headscaleOpts []hsic.Option,
 	serveNodeOpts []tsic.Option,
 	clientNodeOpts []tsic.Option,
 ) *serveTestEnv {
@@ -141,10 +200,8 @@ func newServeTestEnv(
 		scenario.ShutdownAssertNoPanics(t)
 	})
 
-	err = scenario.CreateHeadscaleEnv(
-		[]tsic.Option{},
-		hsic.WithTestName(testName),
-	)
+	opts := append([]hsic.Option{hsic.WithTestName(testName)}, headscaleOpts...)
+	err = scenario.CreateHeadscaleEnv([]tsic.Option{}, opts...)
 	requireNoErrHeadscaleEnv(t, err)
 
 	headscale, err := scenario.Headscale()

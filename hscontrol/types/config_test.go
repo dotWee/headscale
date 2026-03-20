@@ -313,6 +313,58 @@ func TestValidateServerConfigServeHTTPS(t *testing.T) {
 
 		require.NoError(t, validateServerConfig())
 	})
+
+	t.Run("requires https for funnel", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		require.NoError(t, LoadConfig("", false))
+
+		viper.Set("server_url", "https://headscale.example.com")
+		viper.Set("noise.private_key_path", "/tmp/noise.key")
+		viper.Set("serve.funnel.enabled", true)
+		viper.Set("serve.funnel.allow_ports", []string{"443"})
+		viper.Set("dns.override_local_dns", false)
+
+		err := validateServerConfig()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "serve.funnel.enabled requires serve.https.enabled")
+	})
+
+	t.Run("requires funnel ports", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		require.NoError(t, LoadConfig("", false))
+
+		viper.Set("server_url", "https://headscale.example.com")
+		viper.Set("noise.private_key_path", "/tmp/noise.key")
+		viper.Set("dns.base_domain", "example.com")
+		viper.Set("dns.override_local_dns", false)
+		viper.Set("serve.https.enabled", true)
+		viper.Set("serve.https.dns.provider", "rfc2136")
+		viper.Set("serve.https.dns.rfc2136.nameserver", "127.0.0.1:53")
+		viper.Set("serve.https.dns.rfc2136.zone", "example.com")
+		viper.Set("serve.funnel.enabled", true)
+
+		err := validateServerConfig()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "serve.funnel.allow_ports must be set")
+	})
+
+	t.Run("accepts funnel config", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		require.NoError(t, LoadConfig("", false))
+
+		viper.Set("server_url", "https://headscale.example.com")
+		viper.Set("noise.private_key_path", "/tmp/noise.key")
+		viper.Set("dns.base_domain", "example.com")
+		viper.Set("dns.override_local_dns", false)
+		viper.Set("serve.https.enabled", true)
+		viper.Set("serve.https.dns.provider", "rfc2136")
+		viper.Set("serve.https.dns.rfc2136.nameserver", "127.0.0.1:53")
+		viper.Set("serve.https.dns.rfc2136.zone", "example.com")
+		viper.Set("serve.funnel.enabled", true)
+		viper.Set("serve.funnel.allow_ports", []string{"443", "10080-10081"})
+
+		require.NoError(t, validateServerConfig())
+	})
 }
 
 func TestReadConfigFromEnv(t *testing.T) {

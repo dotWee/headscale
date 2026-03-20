@@ -146,8 +146,12 @@ func serveFeatureResponse(cfg *types.Config, feature string) (*tailcfg.QueryFeat
 			Text: "Tailscale Serve HTTPS is disabled on this Headscale server. An administrator must enable serve.https and configure DNS challenge support.",
 		}, nil
 	case funnelFeatureName:
+		if cfg.Serve.Funnel.Enabled {
+			return &tailcfg.QueryFeatureResponse{Complete: true}, nil
+		}
+
 		return &tailcfg.QueryFeatureResponse{
-			Text: "Tailscale Funnel is not supported by this Headscale server yet.",
+			Text: "Tailscale Funnel is disabled on this Headscale server. An administrator must enable serve.funnel and allow the requested ports.",
 		}, nil
 	default:
 		return nil, fmt.Errorf("%w: %s", errUnknownServeFeature, feature)

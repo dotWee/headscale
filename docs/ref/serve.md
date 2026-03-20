@@ -14,14 +14,15 @@ Headscale currently supports:
 - `tailscale serve status` and `tailscale serve reset` for node-scoped private Serve
 - HTTPS certificate provisioning support for Serve when `serve.https.enabled` is configured
 - ACME DNS-01 challenge updates through RFC2136
+- Operator-controlled Funnel capability advertisement and allowed-port policy
 
 Headscale currently does not support:
 
-- [Funnel](https://tailscale.com/kb/1223/funnel)
 - Service-host mode such as `tailscale serve --service`
 - Service advertisement flows such as `tailscale serve advertise` and `tailscale serve drain`
 - Service-host configuration import/export via `tailscale serve get-config` and `tailscale serve set-config`
 - Additional DNS challenge providers beyond RFC2136
+- full managed-control-plane Funnel parity, including validated public ingress behavior
 
 ## How the implementation works
 
@@ -43,6 +44,7 @@ Headscale provides the server-side primitives that current Tailscale clients exp
 - Per-node certificate domains in the netmap DNS configuration
 - `POST /machine/feature/query` for Serve/Funnel capability checks
 - `POST /machine/set-dns` for ACME DNS-01 TXT record updates
+- Funnel node capabilities and allowed-port advertisement via node `CapMap`
 
 ## Private HTTP Serve
 
@@ -65,6 +67,44 @@ Headscale's integration coverage currently exercises:
 - TCP forwarding with `tailscale serve --tcp`
 
 Other node-scoped Serve combinations may work because configuration remains client-local, but they are not yet covered by Headscale's integration suite.
+
+## Funnel Capability And Policy
+
+Headscale can now advertise Funnel capability to clients when it is enabled in server configuration.
+
+This is intentionally narrower than full Funnel product parity:
+
+- Headscale can tell clients that Funnel is allowed
+- Headscale can restrict Funnel to a configured set of ports
+- current clients can toggle Funnel locally when the requested port is allowed
+- Headscale does not yet implement the broader managed-control-plane behavior needed for full public-ingress parity
+
+Configuration example:
+
+```yaml title="config.yaml"
+serve:
+  https:
+    enabled: true
+
+    dns:
+      provider: rfc2136
+      rfc2136:
+        nameserver: 192.0.2.53:53
+        zone: example.com
+
+  funnel:
+    enabled: true
+    allow_ports:
+      - 443
+      - 8443
+      - 10080-10081
+```
+
+Current requirements:
+
+- `serve.funnel.enabled` requires `serve.https.enabled`
+- `serve.funnel.allow_ports` must be set explicitly
+- allowed ports may be individual ports or inclusive ranges
 
 ## Private HTTPS Serve
 
@@ -117,7 +157,7 @@ See [Configuration](configuration.md), [DNS](dns.md), and [TLS](tls.md) for rela
 - HTTPS support is for private tailnet Serve. Certificate issuance still depends on public DNS because ACME DNS-01 is used.
 - Headscale only updates the ACME challenge TXT record. It does not manage the rest of your authoritative DNS zone.
 - Serve availability is still subject to ACLs. Headscale enabling Serve does not bypass policy.
-- Funnel-related capability placeholders exist internally, but Funnel is not exposed as supported.
+- Funnel enablement in Headscale currently means capability and port-policy advertisement to clients. It is not yet a claim of full public-ingress parity with Tailscale's managed control plane.
 - Service-hosting requires additional control-plane support such as VIP service collection and `c2n` service discovery, which Headscale does not implement yet.
 
 ## Implementation notes
@@ -128,6 +168,6 @@ The current implementation is intentionally narrow:
 - No new Headscale API was added for editing Serve config
 - No database migration is required
 - RFC2136 is the only built-in DNS challenge backend
-- Service-host and Funnel parity still require additional upstream-style control-plane work
+- Service-host and full Funnel parity still require additional upstream-style control-plane work
 
 This keeps Headscale aligned with current Tailscale client behavior while leaving room for future Funnel and service-hosting work.

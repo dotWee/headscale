@@ -271,6 +271,17 @@ serve:
         tsig_secret: ""
         tsig_algorithm: hmac-sha256.
 
+  funnel:
+    # Advertise Funnel capability to clients.
+    #
+    # This enables the client-side Funnel workflow and restricts it to the
+    # configured port set. Headscale does not yet implement full public-ingress
+    # parity with the managed Tailscale control plane.
+    enabled: false
+    # Allowed Funnel ports. Entries may be single ports or ranges.
+    allow_ports:
+      - 443
+
 log:
   # Valid log levels: panic, fatal, error, warn, info, debug, trace
   level: info

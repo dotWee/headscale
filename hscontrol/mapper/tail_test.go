@@ -328,3 +328,31 @@ func TestTailNodeServeHTTPSCapability(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, got.CapMap, tailcfg.CapabilityHTTPS)
 }
+
+func TestTailNodeFunnelCapabilities(t *testing.T) {
+	t.Parallel()
+
+	node := &types.Node{
+		GivenName: "serve-node",
+		Hostinfo:  &tailcfg.Hostinfo{},
+	}
+
+	got, err := node.View().TailNode(
+		0,
+		func(id types.NodeID) []netip.Prefix { return nil },
+		&types.Config{
+			BaseDomain: "example.com",
+			Serve: types.ServeConfig{
+				HTTPS: types.ServeHTTPSConfig{Enabled: true},
+				Funnel: types.ServeFunnelConfig{
+					Enabled:    true,
+					AllowPorts: []string{"443", "10080-10081"},
+				},
+			},
+		},
+	)
+	require.NoError(t, err)
+	require.Contains(t, got.CapMap, tailcfg.CapabilityHTTPS)
+	require.Contains(t, got.CapMap, tailcfg.NodeAttrFunnel)
+	require.Contains(t, got.CapMap, tailcfg.NodeCapability("https://tailscale.com/cap/funnel-ports?ports=10080-10081,443"))
+}
