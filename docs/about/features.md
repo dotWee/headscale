@@ -34,5 +34,5 @@ provides on overview of Headscale's feature and compatibility with the Tailscale
     - [x] Update user profile from identity provider
     - [ ] OIDC groups cannot be used in ACLs
 - [ ] [Funnel](https://tailscale.com/kb/1223/funnel) ([#1040](https://github.com/juanfont/headscale/issues/1040))
-- [x] [Serve](../ref/serve.md) (private tailnet Serve, with RFC2136-backed HTTPS support) ([#1921](https://github.com/juanfont/headscale/issues/1921))
+- [x] [Serve](../ref/serve.md) (private node-scoped tailnet Serve, with RFC2136-backed HTTPS support; service-host and Funnel not yet implemented) ([#1921](https://github.com/juanfont/headscale/issues/1921))
 - [ ] [Network flow logs](https://tailscale.com/kb/1219/network-flow-logs) ([#1687](https://github.com/juanfont/headscale/issues/1687))

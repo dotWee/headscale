@@ -10,28 +10,32 @@ Headscale currently supports:
 
 - Private `tailscale serve` inside the tailnet
 - Client-managed Serve configuration via the Tailscale LocalAPI
+- Node-scoped HTTP proxy and TCP forwarding Serve modes
+- `tailscale serve status` and `tailscale serve reset` for node-scoped private Serve
 - HTTPS certificate provisioning support for Serve when `serve.https.enabled` is configured
 - ACME DNS-01 challenge updates through RFC2136
 
 Headscale currently does not support:
 
 - [Funnel](https://tailscale.com/kb/1223/funnel)
+- Service-host mode such as `tailscale serve --service`
 - Service advertisement flows such as `tailscale serve advertise` and `tailscale serve drain`
+- Service-host configuration import/export via `tailscale serve get-config` and `tailscale serve set-config`
 - Additional DNS challenge providers beyond RFC2136
 
 ## How the implementation works
 
 Headscale does not store Serve configuration in its database.
 
-The Serve configuration remains client-local state and uses Tailscale's upstream Go types directly, such as `ipn.ServeConfig`. In practice this means commands such as:
+The Serve configuration remains client-local state and uses Tailscale's upstream Go types directly, such as `ipn.ServeConfig`. In practice this means node-scoped commands such as:
 
 - `tailscale serve`
 - `tailscale serve status`
 - `tailscale serve reset`
-- `tailscale serve get-config`
-- `tailscale serve set-config`
 
 continue to operate through the local `tailscaled` instance on the node.
+
+The newer `tailscale serve get-config` and `tailscale serve set-config` commands are part of Tailscale's service-host workflow. They currently require `--service` or `--all` and are not useful for Headscale's currently supported private node-scoped Serve mode.
 
 Headscale provides the server-side primitives that current Tailscale clients expect:
 
@@ -52,6 +56,15 @@ tailscale serve status
 ```
 
 Peers in the same tailnet can then access the served endpoint over the node's Tailscale name or address, subject to your ACLs.
+
+Headscale's integration coverage currently exercises:
+
+- HTTP proxy Serve
+- `tailscale serve status`
+- `tailscale serve reset`
+- TCP forwarding with `tailscale serve --tcp`
+
+Other node-scoped Serve combinations may work because configuration remains client-local, but they are not yet covered by Headscale's integration suite.
 
 ## Private HTTPS Serve
 
@@ -105,6 +118,7 @@ See [Configuration](configuration.md), [DNS](dns.md), and [TLS](tls.md) for rela
 - Headscale only updates the ACME challenge TXT record. It does not manage the rest of your authoritative DNS zone.
 - Serve availability is still subject to ACLs. Headscale enabling Serve does not bypass policy.
 - Funnel-related capability placeholders exist internally, but Funnel is not exposed as supported.
+- Service-hosting requires additional control-plane support such as VIP service collection and `c2n` service discovery, which Headscale does not implement yet.
 
 ## Implementation notes
 
@@ -114,5 +128,6 @@ The current implementation is intentionally narrow:
 - No new Headscale API was added for editing Serve config
 - No database migration is required
 - RFC2136 is the only built-in DNS challenge backend
+- Service-host and Funnel parity still require additional upstream-style control-plane work
 
 This keeps Headscale aligned with current Tailscale client behavior while leaving room for future Funnel and service-hosting work.
