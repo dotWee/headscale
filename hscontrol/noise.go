@@ -158,7 +158,7 @@ func (h *Headscale) NoiseUpgradeHandler(
 		// client sends a [tailcfg.SetDNSRequest] to this endpoints and expect
 		// the server to create or update this DNS record "somewhere".
 		// It is typically a TXT record for an ACME challenge.
-		r.Post("/set-dns", ns.NotImplementedHandler)
+		r.Post("/set-dns", ns.SetDNSHandler)
 
 		// A patch of [tailcfg.SetDeviceAttributesRequest] to update device attributes.
 		// We currently do not support device attributes.
@@ -174,7 +174,7 @@ func (h *Headscale) NoiseUpgradeHandler(
 
 		// Asks the server if a feature is available and receive information about how to enable it.
 		// Gets a [tailcfg.QueryFeatureRequest] and returns a [tailcfg.QueryFeatureResponse].
-		r.Post("/feature/query", ns.NotImplementedHandler)
+		r.Post("/feature/query", ns.QueryFeatureHandler)
 
 		r.Post("/update-health", ns.NotImplementedHandler)
 
@@ -270,6 +270,82 @@ func rejectUnsupported(
 func (ns *noiseServer) NotImplementedHandler(writer http.ResponseWriter, req *http.Request) {
 	log.Trace().Caller().Str("path", req.URL.String()).Msg("not implemented handler hit")
 	http.Error(writer, "Not implemented yet", http.StatusNotImplemented)
+}
+
+func (ns *noiseServer) QueryFeatureHandler(
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	if req.Method != http.MethodPost {
+		httpError(writer, errMethodNotAllowed)
+		return
+	}
+
+	var featureReq tailcfg.QueryFeatureRequest
+	if err := json.NewDecoder(req.Body).Decode(&featureReq); err != nil {
+		httpError(writer, NewHTTPError(http.StatusBadRequest, "invalid feature query request", err))
+		return
+	}
+	if featureReq.NodeKey != ns.nodeKey {
+		httpError(writer, NewHTTPError(http.StatusForbidden, "node key does not match noise session", errInvalidServeDNSNode))
+		return
+	}
+	if _, ok := ns.headscale.state.GetNodeByNodeKey(featureReq.NodeKey); !ok {
+		httpError(writer, NewHTTPError(http.StatusNotFound, "node not found", errServeNodeUnavailable))
+		return
+	}
+
+	resp, err := serveFeatureResponse(ns.headscale.cfg, featureReq.Feature)
+	if err != nil {
+		httpError(writer, NewHTTPError(http.StatusBadRequest, "unsupported feature", err))
+		return
+	}
+
+	writer.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(writer).Encode(resp); err != nil {
+		httpError(writer, err)
+	}
+}
+
+func (ns *noiseServer) SetDNSHandler(
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	if req.Method != http.MethodPost {
+		httpError(writer, errMethodNotAllowed)
+		return
+	}
+	if ns.headscale.serveDNS == nil {
+		httpError(writer, NewHTTPError(http.StatusNotImplemented, "tailscale serve HTTPS is not enabled", errServeDNSDisabled))
+		return
+	}
+
+	var dnsReq tailcfg.SetDNSRequest
+	if err := json.NewDecoder(req.Body).Decode(&dnsReq); err != nil {
+		httpError(writer, NewHTTPError(http.StatusBadRequest, "invalid set-dns request", err))
+		return
+	}
+
+	node, ok := ns.headscale.state.GetNodeByNodeKey(dnsReq.NodeKey)
+	if !ok {
+		httpError(writer, NewHTTPError(http.StatusNotFound, "node not found", errServeNodeUnavailable))
+		return
+	}
+
+	if err := validateServeDNSRequest(ns.headscale.cfg, node, ns.nodeKey, dnsReq); err != nil {
+		httpError(writer, NewHTTPError(http.StatusBadRequest, "invalid set-dns request", err))
+		return
+	}
+
+	if err := ns.headscale.serveDNS.SetDNS(req.Context(), dnsReq.Name, dnsReq.Value); err != nil {
+		httpError(writer, NewHTTPError(http.StatusBadGateway, "failed to update DNS challenge record", err))
+		return
+	}
+
+	writer.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(writer).Encode(&tailcfg.SetDNSResponse{}); err != nil {
+		httpError(writer, err)
+	}
 }
 
 func urlParam[T any](req *http.Request, key string) (T, error) {

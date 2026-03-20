@@ -19,8 +19,9 @@ var iap = func(ipStr string) *netip.Addr {
 
 func TestDNSConfigMapResponse(t *testing.T) {
 	tests := []struct {
-		magicDNS bool
-		want     *tailcfg.DNSConfig
+		magicDNS   bool
+		serveHTTPS bool
+		want       *tailcfg.DNSConfig
 	}{
 		{
 			magicDNS: true,
@@ -30,6 +31,18 @@ func TestDNSConfigMapResponse(t *testing.T) {
 					"foobar.headscale.net",
 				},
 				Proxied: true,
+			},
+		},
+		{
+			magicDNS:   true,
+			serveHTTPS: true,
+			want: &tailcfg.DNSConfig{
+				Routes: map[string][]*dnstype.Resolver{},
+				Domains: []string{
+					"foobar.headscale.net",
+				},
+				Proxied:     true,
+				CertDomains: []string{"test_get_shared_nodes_1.foobar.headscale.net"},
 			},
 		},
 		{
@@ -45,8 +58,9 @@ func TestDNSConfigMapResponse(t *testing.T) {
 		t.Run(fmt.Sprintf("with-magicdns-%v", tt.magicDNS), func(t *testing.T) {
 			mach := func(hostname, username string, userid uint) *types.Node {
 				return &types.Node{
-					Hostname: hostname,
-					UserID:   new(userid),
+					Hostname:  hostname,
+					GivenName: hostname,
+					UserID:    new(userid),
 					User: &types.User{
 						Name: username,
 					},
@@ -66,6 +80,10 @@ func TestDNSConfigMapResponse(t *testing.T) {
 			got := generateDNSConfig(
 				&types.Config{
 					TailcfgDNSConfig: &dnsConfigOrig,
+					BaseDomain:       baseDomain,
+					Serve: types.ServeConfig{
+						HTTPS: types.ServeHTTPSConfig{Enabled: tt.serveHTTPS},
+					},
 				},
 				nodeInShared1.View(),
 			)

@@ -75,7 +75,8 @@ type Config struct {
 
 	DERP DERPConfig
 
-	TLS TLSConfig
+	TLS   TLSConfig
+	Serve ServeConfig
 
 	ACMEURL   string
 	ACMEEmail string
@@ -170,6 +171,32 @@ type LetsEncryptConfig struct {
 	Hostname      string
 	CacheDir      string
 	ChallengeType string
+}
+
+type ServeConfig struct {
+	Domain string
+	HTTPS  ServeHTTPSConfig
+}
+
+type ServeHTTPSConfig struct {
+	Enabled bool
+	DNS     ServeDNSConfig
+}
+
+type ServeDNSConfig struct {
+	Provider string
+	TTL      uint32
+	Timeout  time.Duration
+	RFC2136  RFC2136Config
+}
+
+type RFC2136Config struct {
+	Nameserver    string
+	Zone          string
+	Network       string
+	TSIGKeyName   string
+	TSIGSecret    string
+	TSIGAlgorithm string
 }
 
 type PKCEConfig struct {
@@ -394,6 +421,17 @@ func LoadConfig(path string, isFile bool) error {
 	viper.SetDefault("logtail.enabled", false)
 	viper.SetDefault("randomize_client_port", false)
 	viper.SetDefault("taildrop.enabled", true)
+	viper.SetDefault("serve.domain", "")
+	viper.SetDefault("serve.https.enabled", false)
+	viper.SetDefault("serve.https.dns.provider", "")
+	viper.SetDefault("serve.https.dns.ttl", 120)
+	viper.SetDefault("serve.https.dns.timeout", "5s")
+	viper.SetDefault("serve.https.dns.rfc2136.nameserver", "")
+	viper.SetDefault("serve.https.dns.rfc2136.zone", "")
+	viper.SetDefault("serve.https.dns.rfc2136.network", "udp")
+	viper.SetDefault("serve.https.dns.rfc2136.tsig_key_name", "")
+	viper.SetDefault("serve.https.dns.rfc2136.tsig_secret", "")
+	viper.SetDefault("serve.https.dns.rfc2136.tsig_algorithm", "hmac-sha256.")
 
 	viper.SetDefault("ephemeral_node_inactivity_timeout", "120s")
 
@@ -505,6 +543,41 @@ func validateServerConfig() error {
 		}
 	}
 
+	if viper.GetBool("serve.https.enabled") {
+		serveDomain := viper.GetString("serve.domain")
+		baseDomain := viper.GetString("dns.base_domain")
+		if serveDomain == "" {
+			serveDomain = baseDomain
+		}
+
+		if serveDomain == "" {
+			errorText += "Fatal config error: serve.https.enabled requires serve.domain or dns.base_domain to be set\n"
+		}
+
+		if baseDomain != "" && serveDomain != baseDomain {
+			errorText += "Fatal config error: serve.domain must match dns.base_domain for Tailscale Serve HTTPS\n"
+		}
+
+		switch provider := viper.GetString("serve.https.dns.provider"); provider {
+		case "rfc2136":
+			if viper.GetString("serve.https.dns.rfc2136.nameserver") == "" {
+				errorText += "Fatal config error: serve.https.dns.rfc2136.nameserver must be set when using the RFC2136 provider\n"
+			}
+			if viper.GetString("serve.https.dns.rfc2136.zone") == "" {
+				errorText += "Fatal config error: serve.https.dns.rfc2136.zone must be set when using the RFC2136 provider\n"
+			}
+			switch network := viper.GetString("serve.https.dns.rfc2136.network"); network {
+			case "", "udp", "tcp":
+			default:
+				errorText += fmt.Sprintf("Fatal config error: serve.https.dns.rfc2136.network must be either udp or tcp, got %q\n", network)
+			}
+		case "":
+			errorText += "Fatal config error: serve.https.dns.provider must be set when serve.https.enabled is true\n"
+		default:
+			errorText += fmt.Sprintf("Fatal config error: unsupported serve.https.dns.provider %q\n", provider)
+		}
+	}
+
 	// Validate tuning parameters
 	if size := viper.GetInt("tuning.node_store_batch_size"); size <= 0 {
 		errorText += fmt.Sprintf(
@@ -544,6 +617,28 @@ func tlsConfig() TLSConfig {
 		KeyPath: util.AbsolutePathFromConfigPath(
 			viper.GetString("tls_key_path"),
 		),
+	}
+}
+
+func serveConfig() ServeConfig {
+	return ServeConfig{
+		Domain: viper.GetString("serve.domain"),
+		HTTPS: ServeHTTPSConfig{
+			Enabled: viper.GetBool("serve.https.enabled"),
+			DNS: ServeDNSConfig{
+				Provider: viper.GetString("serve.https.dns.provider"),
+				TTL:      viper.GetUint32("serve.https.dns.ttl"),
+				Timeout:  viper.GetDuration("serve.https.dns.timeout"),
+				RFC2136: RFC2136Config{
+					Nameserver:    viper.GetString("serve.https.dns.rfc2136.nameserver"),
+					Zone:          viper.GetString("serve.https.dns.rfc2136.zone"),
+					Network:       viper.GetString("serve.https.dns.rfc2136.network"),
+					TSIGKeyName:   viper.GetString("serve.https.dns.rfc2136.tsig_key_name"),
+					TSIGSecret:    viper.GetString("serve.https.dns.rfc2136.tsig_secret"),
+					TSIGAlgorithm: viper.GetString("serve.https.dns.rfc2136.tsig_algorithm"),
+				},
+			},
+		},
 	}
 }
 
@@ -1059,7 +1154,8 @@ func LoadServerConfig() (*Config, error) {
 
 		Database: databaseConfig(),
 
-		TLS: tlsConfig(),
+		TLS:   tlsConfig(),
+		Serve: serveConfig(),
 
 		DNSConfig:        dnsConfig,
 		TailcfgDNSConfig: dnsToTailcfgDNS(dnsConfig),

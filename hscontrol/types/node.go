@@ -1115,6 +1115,9 @@ func (nv NodeView) TailNode(
 	if cfg.Taildrop.Enabled {
 		capMap[tailcfg.CapabilityFileSharing] = []tailcfg.RawMessage{}
 	}
+	if cfg.Serve.HTTPS.Enabled {
+		capMap[tailcfg.CapabilityHTTPS] = []tailcfg.RawMessage{}
+	}
 
 	tNode := tailcfg.Node{
 		//nolint:gosec // G115: NodeID values are within int64 range

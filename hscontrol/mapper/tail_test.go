@@ -10,6 +10,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/juanfont/headscale/hscontrol/routes"
 	"github.com/juanfont/headscale/hscontrol/types"
+	"github.com/stretchr/testify/require"
 	"tailscale.com/net/tsaddr"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
@@ -303,4 +304,27 @@ func TestNodeExpiry(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTailNodeServeHTTPSCapability(t *testing.T) {
+	t.Parallel()
+
+	node := &types.Node{
+		GivenName: "serve-node",
+		Hostinfo:  &tailcfg.Hostinfo{},
+	}
+
+	got, err := node.View().TailNode(
+		0,
+		func(id types.NodeID) []netip.Prefix { return nil },
+		&types.Config{
+			BaseDomain: "example.com",
+			Taildrop:   types.TaildropConfig{Enabled: true},
+			Serve: types.ServeConfig{
+				HTTPS: types.ServeHTTPSConfig{Enabled: true},
+			},
+		},
+	)
+	require.NoError(t, err)
+	require.Contains(t, got.CapMap, tailcfg.CapabilityHTTPS)
 }

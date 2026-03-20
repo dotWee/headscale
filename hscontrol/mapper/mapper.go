@@ -125,6 +125,14 @@ func generateDNSConfig(
 	dnsConfig := cfg.TailcfgDNSConfig.Clone()
 
 	addNextDNSMetadata(dnsConfig.Resolvers, node)
+	if cfg.Serve.HTTPS.Enabled {
+		fqdn, err := node.GetFQDN(cfg.BaseDomain)
+		if err != nil {
+			log.Error().Err(err).Msg("failed to derive serve certificate domain")
+		} else {
+			dnsConfig.CertDomains = append(dnsConfig.CertDomains, strings.TrimSuffix(strings.ToLower(fqdn), "."))
+		}
+	}
 
 	return dnsConfig
 }

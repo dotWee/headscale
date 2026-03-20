@@ -263,6 +263,41 @@ func TestReadConfig(t *testing.T) {
 	}
 }
 
+func TestValidateServerConfigServeHTTPS(t *testing.T) {
+	t.Parallel()
+
+	t.Run("requires provider", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		require.NoError(t, LoadConfig("", false))
+
+		viper.Set("server_url", "https://headscale.example.com")
+		viper.Set("noise.private_key_path", "/tmp/noise.key")
+		viper.Set("dns.base_domain", "example.com")
+		viper.Set("dns.override_local_dns", false)
+		viper.Set("serve.https.enabled", true)
+
+		err := validateServerConfig()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "serve.https.dns.provider must be set")
+	})
+
+	t.Run("accepts rfc2136", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		require.NoError(t, LoadConfig("", false))
+
+		viper.Set("server_url", "https://headscale.example.com")
+		viper.Set("noise.private_key_path", "/tmp/noise.key")
+		viper.Set("dns.base_domain", "example.com")
+		viper.Set("dns.override_local_dns", false)
+		viper.Set("serve.https.enabled", true)
+		viper.Set("serve.https.dns.provider", "rfc2136")
+		viper.Set("serve.https.dns.rfc2136.nameserver", "127.0.0.1:53")
+		viper.Set("serve.https.dns.rfc2136.zone", "example.com")
+
+		require.NoError(t, validateServerConfig())
+	})
+}
+
 func TestReadConfigFromEnv(t *testing.T) {
 	tests := []struct {
 		name      string

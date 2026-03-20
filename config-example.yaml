@@ -236,6 +236,40 @@ tls_letsencrypt_listen: ":http"
 tls_cert_path: ""
 tls_key_path: ""
 
+## Tailscale Serve HTTPS
+#
+# Enables the control-plane primitives needed for private
+# `tailscale serve https` on Headscale-managed nodes.
+#
+# The serve domain must match dns.base_domain and must be publicly
+# delegated so ACME dns-01 TXT records can be created under
+# `_acme-challenge.<node>.<domain>`.
+serve:
+  # The Serve certificate domain. Defaults to dns.base_domain when empty.
+  domain: example.com
+
+  https:
+    # Enable private Tailscale Serve HTTPS support.
+    enabled: false
+
+    dns:
+      # Supported providers: rfc2136
+      provider: ""
+      ttl: 120
+      timeout: 5s
+
+      rfc2136:
+        # Authoritative DNS server for dynamic updates.
+        nameserver: ""
+        # DNS zone to update, without the _acme-challenge prefix.
+        zone: example.com
+        # udp or tcp
+        network: udp
+        # Optional TSIG settings.
+        tsig_key_name: ""
+        tsig_secret: ""
+        tsig_algorithm: hmac-sha256.
+
 log:
   # Valid log levels: panic, fatal, error, warn, info, debug, trace
   level: info

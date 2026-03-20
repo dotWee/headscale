@@ -103,6 +103,7 @@ type Headscale struct {
 	extraRecordMan *dns.ExtraRecordsMan
 	authProvider   AuthProvider
 	mapBatcher     *mapper.Batcher
+	serveDNS       serveDNSManager
 
 	clientStreamsOpen sync.WaitGroup
 }
@@ -138,6 +139,11 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 		noisePrivateKey:   noisePrivateKey,
 		clientStreamsOpen: sync.WaitGroup{},
 		state:             s,
+	}
+
+	app.serveDNS, err = newServeDNSManager(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("initializing serve DNS manager: %w", err)
 	}
 
 	// Initialize ephemeral garbage collector
