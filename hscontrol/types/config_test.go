@@ -365,6 +365,25 @@ func TestValidateServerConfigServeHTTPS(t *testing.T) {
 
 		require.NoError(t, validateServerConfig())
 	})
+
+	t.Run("accepts comma separated funnel ports from env style input", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		require.NoError(t, LoadConfig("", false))
+
+		viper.Set("server_url", "https://headscale.example.com")
+		viper.Set("noise.private_key_path", "/tmp/noise.key")
+		viper.Set("dns.base_domain", "example.com")
+		viper.Set("dns.override_local_dns", false)
+		viper.Set("serve.https.enabled", true)
+		viper.Set("serve.https.dns.provider", "rfc2136")
+		viper.Set("serve.https.dns.rfc2136.nameserver", "127.0.0.1:53")
+		viper.Set("serve.https.dns.rfc2136.zone", "example.com")
+		viper.Set("serve.funnel.enabled", true)
+		viper.Set("serve.funnel.allow_ports", "443,8443,10080-10081")
+
+		require.NoError(t, validateServerConfig())
+		assert.Equal(t, []string{"443", "8443", "10080-10081"}, serveConfig().Funnel.AllowPorts)
+	})
 }
 
 func TestReadConfigFromEnv(t *testing.T) {

@@ -245,7 +245,9 @@ jobs:
           - TestSubnetRouteACLFiltering
           - TestHeadscale
           - TestTailscaleNodesJoiningHeadcale
-          - TestServeHTTPPeerReachability
+          - TestServeHTTPProxyStatusAndReset
+          - TestServeTCPPeerReachability
+          - TestFunnelToggleStatus
           - TestSSHOneUserToAll
           - TestSSHMultipleUsersAllToAll
           - TestSSHNoSSHConfigured

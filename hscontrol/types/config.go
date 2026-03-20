@@ -589,7 +589,7 @@ func validateServerConfig() error {
 			errorText += "Fatal config error: serve.funnel.enabled requires serve.https.enabled\n"
 		}
 
-		ports, err := normalizedServeFunnelPorts(viper.GetStringSlice("serve.funnel.allow_ports"))
+		ports, err := normalizedServeFunnelPorts(serveFunnelAllowPorts())
 		if err != nil {
 			errorText += fmt.Sprintf("Fatal config error: invalid serve.funnel.allow_ports: %v\n", err)
 		} else if len(ports) == 0 {
@@ -660,7 +660,7 @@ func serveConfig() ServeConfig {
 		},
 		Funnel: ServeFunnelConfig{
 			Enabled:    viper.GetBool("serve.funnel.enabled"),
-			AllowPorts: viper.GetStringSlice("serve.funnel.allow_ports"),
+			AllowPorts: serveFunnelAllowPorts(),
 		},
 	}
 }
@@ -1043,6 +1043,20 @@ func normalizedServeFunnelPorts(ports []string) ([]string, error) {
 	normalized = slices.Compact(normalized)
 
 	return normalized, nil
+}
+
+func serveFunnelAllowPorts() []string {
+	ports := viper.GetStringSlice("serve.funnel.allow_ports")
+	if len(ports) != 1 {
+		return ports
+	}
+
+	raw := viper.GetString("serve.funnel.allow_ports")
+	if raw == "" || !strings.Contains(raw, ",") {
+		return ports
+	}
+
+	return strings.Split(raw, ",")
 }
 
 func (c ServeFunnelConfig) Capability() (tailcfg.NodeCapability, bool, error) {
