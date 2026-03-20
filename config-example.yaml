@@ -241,9 +241,10 @@ tls_key_path: ""
 # Enables the control-plane primitives needed for private
 # `tailscale serve https` on Headscale-managed nodes.
 #
-# The serve domain must match dns.base_domain and must be publicly
-# delegated so ACME dns-01 TXT records can be created under
-# `_acme-challenge.<node>.<domain>`.
+# The serve domain is the certificate suffix advertised to clients.
+# It defaults to dns.base_domain when empty, but it can be a separate
+# publicly delegated zone as long as Headscale can create ACME DNS-01
+# TXT records under `_acme-challenge.<node>.<domain>`.
 serve:
   # The Serve certificate domain. Defaults to dns.base_domain when empty.
   domain: example.com

@@ -92,7 +92,7 @@ serve:
 
 Current requirements:
 
-- `serve.domain` must match `dns.base_domain`
+- `serve.domain` defaults to `dns.base_domain` when empty, but it may be a separate delegated zone
 - the Serve zone must be publicly delegated
 - the zone must allow dynamic updates through RFC2136
 - if TSIG is required by your DNS server, the TSIG settings must be configured

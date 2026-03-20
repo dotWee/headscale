@@ -216,6 +216,36 @@ func TestValidateServeDNSRequest(t *testing.T) {
 	require.ErrorIs(t, validateServeDNSRequest(cfg, node.View(), node.NodeKey, req), errInvalidServeDNSName)
 }
 
+func TestValidateServeDNSRequestDedicatedServeDomain(t *testing.T) {
+	t.Parallel()
+
+	user := &types.User{Name: "test"}
+	node := &types.Node{
+		ID:        1,
+		Hostname:  "serve-node",
+		GivenName: "serve-node",
+		UserID:    &user.ID,
+		User:      user,
+		NodeKey:   key.NewNode().Public(),
+	}
+	cfg := &types.Config{
+		BaseDomain: "tailnet.example.com",
+		Serve: types.ServeConfig{
+			Domain: "serve.example.com",
+			HTTPS:  types.ServeHTTPSConfig{Enabled: true},
+		},
+	}
+
+	req := tailcfg.SetDNSRequest{
+		NodeKey: node.NodeKey,
+		Name:    "_acme-challenge.serve-node.serve.example.com",
+		Type:    "TXT",
+		Value:   "challenge",
+	}
+
+	require.NoError(t, validateServeDNSRequest(cfg, node.View(), node.NodeKey, req))
+}
+
 func TestQueryFeatureHandler(t *testing.T) {
 	t.Parallel()
 
@@ -328,4 +358,46 @@ func TestRFC2136DNSManager(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for RFC2136 update")
 	}
+}
+
+func TestRFC2136DNSManagerRcodeError(t *testing.T) {
+	t.Parallel()
+
+	handler := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		resp := new(dns.Msg)
+		resp.SetReply(r)
+		resp.Rcode = dns.RcodeRefused
+		require.NoError(t, w.WriteMsg(resp))
+	})
+
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer pc.Close()
+
+	srv := &dns.Server{
+		PacketConn: pc,
+		Handler:    handler,
+		MsgAcceptFunc: func(dns.Header) dns.MsgAcceptAction {
+			return dns.MsgAccept
+		},
+	}
+	go func() {
+		_ = srv.ActivateAndServe()
+	}()
+	t.Cleanup(func() { _ = srv.Shutdown() })
+
+	manager := &rfc2136DNSManager{
+		nameserver: pc.LocalAddr().String(),
+		zone:       "example.com.",
+		ttl:        120,
+		network:    "udp",
+		timeout: timeouts{
+			request: time.Second,
+		},
+	}
+
+	err = manager.SetDNS(context.Background(), "_acme-challenge.node.example.com", "token")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "_acme-challenge.node.example.com.")
+	assert.Contains(t, err.Error(), "REFUSED")
 }

@@ -554,10 +554,6 @@ func validateServerConfig() error {
 			errorText += "Fatal config error: serve.https.enabled requires serve.domain or dns.base_domain to be set\n"
 		}
 
-		if baseDomain != "" && serveDomain != baseDomain {
-			errorText += "Fatal config error: serve.domain must match dns.base_domain for Tailscale Serve HTTPS\n"
-		}
-
 		switch provider := viper.GetString("serve.https.dns.provider"); provider {
 		case "rfc2136":
 			if viper.GetString("serve.https.dns.rfc2136.nameserver") == "" {

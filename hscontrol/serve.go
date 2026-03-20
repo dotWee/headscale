@@ -10,6 +10,7 @@ import (
 
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/miekg/dns"
+	"github.com/rs/zerolog/log"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 )
@@ -112,15 +113,23 @@ func (m *rfc2136DNSManager) SetDNS(ctx context.Context, name, value string) erro
 		client.TsigSecret = map[string]string{m.tsigKeyName: m.tsigSecret}
 	}
 
+	log.Debug().
+		Str("provider", "rfc2136").
+		Str("zone", m.zone).
+		Str("nameserver", m.nameserver).
+		Str("name", fqdn).
+		Uint32("ttl", m.ttl).
+		Msg("updating serve ACME DNS challenge")
+
 	resp, _, err := client.ExchangeContext(ctx, msg, m.nameserver)
 	if err != nil {
-		return fmt.Errorf("sending RFC2136 update: %w", err)
+		return fmt.Errorf("sending RFC2136 update for %q via %q: %w", fqdn, m.nameserver, err)
 	}
 	if resp == nil {
-		return errors.New("sending RFC2136 update: empty response")
+		return fmt.Errorf("sending RFC2136 update for %q via %q: empty response", fqdn, m.nameserver)
 	}
 	if resp.Rcode != dns.RcodeSuccess {
-		return fmt.Errorf("sending RFC2136 update: %s", dns.RcodeToString[resp.Rcode])
+		return fmt.Errorf("sending RFC2136 update for %q via %q: %s", fqdn, m.nameserver, dns.RcodeToString[resp.Rcode])
 	}
 
 	return nil

@@ -19,9 +19,10 @@ var iap = func(ipStr string) *netip.Addr {
 
 func TestDNSConfigMapResponse(t *testing.T) {
 	tests := []struct {
-		magicDNS   bool
-		serveHTTPS bool
-		want       *tailcfg.DNSConfig
+		magicDNS    bool
+		serveHTTPS  bool
+		serveDomain string
+		want        *tailcfg.DNSConfig
 	}{
 		{
 			magicDNS: true,
@@ -34,15 +35,16 @@ func TestDNSConfigMapResponse(t *testing.T) {
 			},
 		},
 		{
-			magicDNS:   true,
-			serveHTTPS: true,
+			magicDNS:    true,
+			serveHTTPS:  true,
+			serveDomain: "serve.example.net",
 			want: &tailcfg.DNSConfig{
 				Routes: map[string][]*dnstype.Resolver{},
 				Domains: []string{
 					"foobar.headscale.net",
 				},
 				Proxied:     true,
-				CertDomains: []string{"test_get_shared_nodes_1.foobar.headscale.net"},
+				CertDomains: []string{"test_get_shared_nodes_1.serve.example.net"},
 			},
 		},
 		{
@@ -82,7 +84,8 @@ func TestDNSConfigMapResponse(t *testing.T) {
 					TailcfgDNSConfig: &dnsConfigOrig,
 					BaseDomain:       baseDomain,
 					Serve: types.ServeConfig{
-						HTTPS: types.ServeHTTPSConfig{Enabled: tt.serveHTTPS},
+						Domain: tt.serveDomain,
+						HTTPS:  types.ServeHTTPSConfig{Enabled: tt.serveHTTPS},
 					},
 				},
 				nodeInShared1.View(),

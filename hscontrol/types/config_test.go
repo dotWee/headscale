@@ -296,6 +296,23 @@ func TestValidateServerConfigServeHTTPS(t *testing.T) {
 
 		require.NoError(t, validateServerConfig())
 	})
+
+	t.Run("accepts dedicated serve domain", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		require.NoError(t, LoadConfig("", false))
+
+		viper.Set("server_url", "https://headscale.example.com")
+		viper.Set("noise.private_key_path", "/tmp/noise.key")
+		viper.Set("dns.base_domain", "tailnet.example.com")
+		viper.Set("dns.override_local_dns", false)
+		viper.Set("serve.domain", "serve.example.com")
+		viper.Set("serve.https.enabled", true)
+		viper.Set("serve.https.dns.provider", "rfc2136")
+		viper.Set("serve.https.dns.rfc2136.nameserver", "127.0.0.1:53")
+		viper.Set("serve.https.dns.rfc2136.zone", "serve.example.com")
+
+		require.NoError(t, validateServerConfig())
+	})
 }
 
 func TestReadConfigFromEnv(t *testing.T) {
