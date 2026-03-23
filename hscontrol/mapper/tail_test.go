@@ -220,6 +220,7 @@ func TestTailNode(t *testing.T) {
 				func(id types.NodeID) []netip.Prefix {
 					return primary.PrimaryRoutes(id)
 				},
+				nil,
 				cfg,
 			)
 
@@ -276,6 +277,7 @@ func TestNodeExpiry(t *testing.T) {
 				func(id types.NodeID) []netip.Prefix {
 					return []netip.Prefix{}
 				},
+				nil,
 				&types.Config{Taildrop: types.TaildropConfig{Enabled: true}},
 			)
 			if err != nil {
@@ -317,6 +319,7 @@ func TestTailNodeServeHTTPSCapability(t *testing.T) {
 	got, err := node.View().TailNode(
 		0,
 		func(id types.NodeID) []netip.Prefix { return nil },
+		nil,
 		&types.Config{
 			BaseDomain: "example.com",
 			Taildrop:   types.TaildropConfig{Enabled: true},
@@ -340,6 +343,7 @@ func TestTailNodeFunnelCapabilities(t *testing.T) {
 	got, err := node.View().TailNode(
 		0,
 		func(id types.NodeID) []netip.Prefix { return nil },
+		nil,
 		&types.Config{
 			BaseDomain: "example.com",
 			Serve: types.ServeConfig{
@@ -355,4 +359,40 @@ func TestTailNodeFunnelCapabilities(t *testing.T) {
 	require.Contains(t, got.CapMap, tailcfg.CapabilityHTTPS)
 	require.Contains(t, got.CapMap, tailcfg.NodeAttrFunnel)
 	require.Contains(t, got.CapMap, tailcfg.NodeCapability("https://tailscale.com/cap/funnel-ports?ports=10080-10081,443"))
+}
+
+func TestTailNodeServiceHostCapability(t *testing.T) {
+	t.Parallel()
+
+	node := &types.Node{
+		ID:        1,
+		GivenName: "service-node",
+		Hostinfo:  &tailcfg.Hostinfo{},
+		IPv4:      iap("100.64.0.1"),
+	}
+
+	mappings := tailcfg.ServiceIPMappings{
+		tailcfg.ServiceName("svc:web"): {
+			netip.MustParseAddr("100.64.0.10"),
+			netip.MustParseAddr("fd7a:115c:a1e0::10"),
+		},
+	}
+
+	got, err := node.View().TailNode(
+		0,
+		func(id types.NodeID) []netip.Prefix { return nil },
+		func(id types.NodeID) tailcfg.ServiceIPMappings { return mappings },
+		&types.Config{
+			BaseDomain: "example.com",
+			Taildrop:   types.TaildropConfig{Enabled: true},
+		},
+	)
+	require.NoError(t, err)
+	require.Contains(t, got.CapMap, tailcfg.NodeAttrServiceHost)
+	require.Contains(t, got.AllowedIPs, netip.MustParsePrefix("100.64.0.10/32"))
+	require.Contains(t, got.AllowedIPs, netip.MustParsePrefix("fd7a:115c:a1e0::10/128"))
+
+	var decoded tailcfg.ServiceIPMappings
+	require.NoError(t, json.Unmarshal([]byte(got.CapMap[tailcfg.NodeAttrServiceHost][0]), &decoded))
+	require.Equal(t, mappings, decoded)
 }

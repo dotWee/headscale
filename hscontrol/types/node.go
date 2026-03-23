@@ -39,6 +39,9 @@ var (
 // netip.Prefixes representing the primary routes for that node.
 type RouteFunc func(id NodeID) []netip.Prefix
 
+// ServiceIPMappingsFunc returns the VIP service IP mappings assigned to a node.
+type ServiceIPMappingsFunc func(id NodeID) tailcfg.ServiceIPMappings
+
 type (
 	NodeID  uint64
 	NodeIDs []NodeID
@@ -1055,12 +1058,13 @@ func TailNodes(
 	nodes views.Slice[NodeView],
 	capVer tailcfg.CapabilityVersion,
 	primaryRouteFunc RouteFunc,
+	serviceIPMappingsFunc ServiceIPMappingsFunc,
 	cfg *Config,
 ) ([]*tailcfg.Node, error) {
 	tNodes := make([]*tailcfg.Node, 0, nodes.Len())
 
 	for _, node := range nodes.All() {
-		tNode, err := node.TailNode(capVer, primaryRouteFunc, cfg)
+		tNode, err := node.TailNode(capVer, primaryRouteFunc, serviceIPMappingsFunc, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -1075,6 +1079,7 @@ func TailNodes(
 func (nv NodeView) TailNode(
 	capVer tailcfg.CapabilityVersion,
 	primaryRouteFunc RouteFunc,
+	serviceIPMappingsFunc ServiceIPMappingsFunc,
 	cfg *Config,
 ) (*tailcfg.Node, error) {
 	if !nv.Valid() {
@@ -1102,7 +1107,17 @@ func (nv NodeView) TailNode(
 
 	primaryRoutes := primaryRouteFunc(nv.ID())
 	allowedIPs := slices.Concat(nv.Prefixes(), primaryRoutes, nv.ExitRoutes())
+	serviceMappings := tailcfg.ServiceIPMappings(nil)
+	if serviceIPMappingsFunc != nil {
+		serviceMappings = serviceIPMappingsFunc(nv.ID())
+	}
+	for _, ips := range serviceMappings {
+		for _, ip := range ips {
+			allowedIPs = append(allowedIPs, netip.PrefixFrom(ip, ip.BitLen()))
+		}
+	}
 	slices.SortFunc(allowedIPs, netip.Prefix.Compare)
+	allowedIPs = slices.Compact(allowedIPs)
 
 	capMap := tailcfg.NodeCapMap{
 		tailcfg.CapabilityAdmin: []tailcfg.RawMessage{},
@@ -1127,6 +1142,13 @@ func (nv NodeView) TailNode(
 		if ok {
 			capMap[funnelPortsCap] = []tailcfg.RawMessage{}
 		}
+	}
+	if len(serviceMappings) > 0 {
+		raw, err := tailcfg.MarshalCapJSON(serviceMappings)
+		if err != nil {
+			return nil, fmt.Errorf("marshalling service host mappings: %w", err)
+		}
+		capMap[tailcfg.NodeAttrServiceHost] = []tailcfg.RawMessage{raw}
 	}
 
 	tNode := tailcfg.Node{

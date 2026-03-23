@@ -286,9 +286,11 @@ serve:
     # Ask clients to report service-host metadata such as ServicesHash and
     # WireIngress in their hostinfo updates.
     #
-    # This is groundwork for future service-host support. It does not by itself
-    # implement VIP service assignment, advertise/drain, or C2N service
-    # discovery.
+    # Headscale consumes these signals to track stale service metadata and to
+    # publish cached VIP service mappings back in netmaps once they are known.
+    #
+    # This still does not implement the full service-host workflow: there is no
+    # advertise/drain support and no C2N /vip-services fetch path yet.
     collect: false
 
 log:

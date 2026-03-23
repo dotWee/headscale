@@ -123,6 +123,8 @@ type State struct {
 	// Ref: https://github.com/tailscale/tailscale/issues/7125
 	sshCheckAuth map[sshCheckPair]time.Time
 	sshCheckMu   sync.RWMutex
+
+	serviceCollection *serviceCollectionState
 }
 
 // NewState creates and initializes a new State instance, setting up the database,
@@ -2244,6 +2246,7 @@ func (s *State) UpdateNodeFromMapRequest(id types.NodeID, req tailcfg.MapRequest
 		autoApprovedRoutes []netip.Prefix
 		endpointChanged    bool
 		derpChanged        bool
+		serviceChange      change.Change
 	)
 	// We need to ensure we update the node as it is in the NodeStore at
 	// the time of the request.
@@ -2316,6 +2319,12 @@ func (s *State) UpdateNodeFromMapRequest(id types.NodeID, req tailcfg.MapRequest
 		currentNode.ApplyPeerChange(&peerChange)
 
 		if hostinfoChanged {
+			serviceChange = s.UpdateServiceCollectionFromHostinfo(
+				id,
+				currentNode.Hostinfo,
+				req.Hostinfo,
+			)
+
 			// The node might not set NetInfo if it has not changed and if
 			// the full HostInfo object is overwritten, the information is lost.
 			// If there is no NetInfo, keep the previous one.
@@ -2376,16 +2385,21 @@ func (s *State) UpdateNodeFromMapRequest(id types.NodeID, req tailcfg.MapRequest
 	}
 
 	if policyChange.IsFull() {
-		return policyChange, nil
+		return policyChange.Merge(serviceChange), nil
 	}
 
 	if !nodeRouteChange.IsEmpty() {
-		return nodeRouteChange, nil
+		return nodeRouteChange.Merge(serviceChange), nil
 	}
 
 	// Determine the most specific change type based on what actually changed.
 	// This allows us to send lightweight patch updates instead of full map responses.
-	return buildMapRequestChangeResponse(id, updatedNode, hostinfoChanged, endpointChanged, derpChanged)
+	resp, err := buildMapRequestChangeResponse(id, updatedNode, hostinfoChanged, endpointChanged, derpChanged)
+	if err != nil {
+		return change.Change{}, err
+	}
+
+	return resp.Merge(serviceChange), nil
 }
 
 // buildMapRequestChangeResponse determines the appropriate response type for a MapRequest update.
