@@ -33,7 +33,8 @@ Headscale currently supports:
 - ACME DNS-01 challenge updates through RFC2136
 - Operator-controlled Funnel capability advertisement and allowed-port policy
 - collection of client-reported service-host metadata
-- in-memory VIP service caching and service-host capability emission for already-fetched service metadata
+- an upstream-style C2N response path for node-targeted Serve requests
+- in-memory VIP service caching and service-host capability emission for fetched service metadata
 
 Headscale currently does not support:
 
@@ -42,7 +43,7 @@ Headscale currently does not support:
 - Service-host configuration import/export via `tailscale serve get-config` and `tailscale serve set-config`
 - Additional DNS challenge providers beyond RFC2136
 - full managed-control-plane Funnel parity, including validated public ingress behavior
-- control-plane `c2n` service discovery such as `/vip-services`
+- full client workflow parity for service-host Serve
 
 Status summary by area:
 
@@ -51,8 +52,8 @@ Status summary by area:
 | Node-scoped private Serve | Supported | HTTP proxy, TCP forwarding, status/reset, HTTPS control-plane support |
 | Private Serve HTTPS | Supported | Requires `serve.https` and RFC2136 DNS-01 support |
 | Funnel capability and allowed-port policy | Partial | Client-side enablement works, but not full managed-control-plane parity |
-| Service metadata collection | Partial | `CollectServices` is consumed, `ServicesHash` changes are tracked, and fetched metadata can be cached in memory |
-| Service-host Serve | Partial | Netmaps can now carry `NodeAttrServiceHost` and VIP `AllowedIPs`, but there is still no `c2n` fetch path or client workflow parity |
+| Service metadata collection | Partial | `CollectServices` is consumed, `ServicesHash` changes are tracked, and fetched metadata is cached in memory |
+| Service-host Serve | Partial | Netmaps can now carry `NodeAttrServiceHost`, VIP `AllowedIPs`, and fetched `/vip-services` data, but client workflow parity is still incomplete |
 | Full public Funnel behavior | Not supported | No complete public-ingress control-plane implementation |
 
 ## How the implementation works
@@ -75,6 +76,7 @@ Headscale provides the server-side primitives that current Tailscale clients exp
 - Per-node certificate domains in the netmap DNS configuration
 - `POST /machine/feature/query` for Serve/Funnel capability checks
 - `POST /machine/set-dns` for ACME DNS-01 TXT record updates
+- `POST /machine/c2n/{token}` for node-targeted Serve-related C2N responses
 - Funnel node capabilities and allowed-port advertisement via node `CapMap`
 - `CollectServices` map-response support so clients can report service metadata
 - in-memory VIP service caching and `NodeAttrServiceHost` netmap emission for service-host assignments once metadata is available
@@ -154,6 +156,8 @@ When enabled, Headscale sets `CollectServices=true` in map responses. Current cl
 Headscale now consumes those signals server-side:
 
 - changes in `Hostinfo.ServicesHash` mark cached VIP service metadata as stale
+- Headscale can send a node-targeted C2N request and receive the raw HTTP response back over Noise
+- when a stale service hash is seen, Headscale can fetch `GET /vip-services`
 - cached VIP service metadata is stored in memory
 - assigned VIP service IPs are emitted back to the service host in `NodeAttrServiceHost`
 - those VIP addresses are also added to the node's `AllowedIPs`
@@ -163,7 +167,6 @@ This is still only a partial service-host implementation. It does not implement:
 - `tailscale serve --service`
 - `tailscale serve advertise`
 - `tailscale serve drain`
-- control-plane `c2n` service discovery such as `/vip-services`
 - full client workflow parity for `tailscale serve --service`
 
 At the moment, enabling `serve.service.collect` should be understood as partial control-plane groundwork, not as a signal that Headscale is compliant with Tailscale service-host Serve.
@@ -220,7 +223,7 @@ See [Configuration](configuration.md), [DNS](dns.md), and [TLS](tls.md) for rela
 - Headscale only updates the ACME challenge TXT record. It does not manage the rest of your authoritative DNS zone.
 - Serve availability is still subject to ACLs. Headscale enabling Serve does not bypass policy.
 - Funnel enablement in Headscale currently means capability and port-policy advertisement to clients. It is not yet a claim of full public-ingress parity with Tailscale's managed control plane.
-- Service-hosting still requires additional control-plane support, especially a real `c2n` fetch path for `/vip-services` and the rest of the service-host client workflow.
+- Service-hosting still requires additional control-plane support, especially the remaining client workflow semantics after the new `/vip-services` fetch path.
 
 ## Implementation notes
 
@@ -232,6 +235,6 @@ The current implementation is intentionally narrow:
 - RFC2136 is the only built-in DNS challenge backend
 - Service-host and full Funnel parity still require additional upstream-style control-plane work
 
-The biggest remaining gap to official parity is still service-host support. Headscale now has the in-memory state and netmap side of that work, but it still depends on control-plane `c2n` support and the remaining client workflow semantics.
+The biggest remaining gap to official parity is still service-host support. Headscale now has the in-memory state, netmap side, and basic `/vip-services` C2N fetch path, but it still lacks the remaining workflow semantics such as `advertise`, `drain`, and full `--service` parity.
 
 This keeps Headscale aligned with current Tailscale client behavior while leaving room for future Funnel and service-hosting work.

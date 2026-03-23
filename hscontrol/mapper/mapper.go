@@ -321,6 +321,10 @@ func (m *mapper) buildFromChange(
 		builder.WithPeerChangedPatch(resp.PeerPatches)
 	}
 
+	if resp.PingRequest != nil {
+		builder.WithPingRequest(resp.PingRequest)
+	}
+
 	return builder.Build()
 }
 

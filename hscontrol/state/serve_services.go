@@ -18,6 +18,7 @@ type nodeVIPServiceState struct {
 	servicesHash string
 	services     []*tailcfg.VIPService
 	needsRefresh bool
+	refreshing   bool
 }
 
 type serviceCollectionState struct {
@@ -91,6 +92,42 @@ func (s *State) ServiceMetadataNeedsRefresh(id types.NodeID) bool {
 	return ok && nodeState.needsRefresh
 }
 
+func (s *State) BeginServiceRefresh(id types.NodeID) bool {
+	if !s.shouldCollectServices() || s.serviceCollection == nil {
+		return false
+	}
+
+	s.serviceCollection.mu.Lock()
+	defer s.serviceCollection.mu.Unlock()
+
+	nodeState, ok := s.serviceCollection.nodes[id]
+	if !ok || !nodeState.needsRefresh || nodeState.refreshing {
+		return false
+	}
+
+	nodeState.refreshing = true
+	s.serviceCollection.nodes[id] = nodeState
+
+	return true
+}
+
+func (s *State) MarkServiceRefreshFailed(id types.NodeID) {
+	if !s.shouldCollectServices() || s.serviceCollection == nil {
+		return
+	}
+
+	s.serviceCollection.mu.Lock()
+	defer s.serviceCollection.mu.Unlock()
+
+	nodeState, ok := s.serviceCollection.nodes[id]
+	if !ok {
+		return
+	}
+
+	nodeState.refreshing = false
+	s.serviceCollection.nodes[id] = nodeState
+}
+
 func (s *State) UpdateServiceCollectionFromHostinfo(
 	id types.NodeID,
 	oldHI, newHI *tailcfg.Hostinfo,
@@ -128,6 +165,7 @@ func (s *State) UpdateServiceCollectionFromHostinfo(
 		st.nodes[id] = nodeVIPServiceState{
 			servicesHash: newHash,
 			needsRefresh: true,
+			refreshing:   false,
 		}
 		if changed {
 			return change.NodeAdded(id)
@@ -187,6 +225,7 @@ func (s *State) SetVIPServices(
 		servicesHash: resp.ServicesHash,
 		services:     clonedServices,
 		needsRefresh: false,
+		refreshing:   false,
 	}
 
 	if !changed {

@@ -286,8 +286,9 @@ serve:
     # Ask clients to report service-host metadata such as ServicesHash and
     # WireIngress in their hostinfo updates.
     #
-    # Headscale consumes these signals to track stale service metadata and to
-    # publish cached VIP service mappings back in netmaps once they are known.
+    # Headscale consumes these signals to track stale service metadata, fetch
+    # /vip-services over C2N, and publish cached VIP service mappings back in
+    # netmaps once they are known.
     #
     # This still does not implement the full service-host workflow: there is no
     # advertise/drain support and no C2N /vip-services fetch path yet.

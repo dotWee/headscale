@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
@@ -311,6 +314,48 @@ func TestSetDNSHandler(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "_acme-challenge.serve-node.example.com", mockDNS.name)
 	assert.Equal(t, "challenge", mockDNS.value)
+}
+
+func TestC2NResponseHandler(t *testing.T) {
+	t.Parallel()
+
+	app, _ := newServeTestApp(t)
+	nodeKey := key.NewNode().Public()
+	respCh := make(chan *http.Response, 1)
+	app.c2n.add("token-1", c2nPendingResponse{
+		nodeKey: nodeKey,
+		respCh:  respCh,
+	})
+
+	ns := &noiseServer{
+		headscale: app,
+		nodeKey:   nodeKey,
+	}
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/machine/c2n/token-1",
+		strings.NewReader("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"),
+	)
+	routeCtx := chi.NewRouteContext()
+	routeCtx.URLParams.Add("token", "token-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
+	rec := httptest.NewRecorder()
+
+	ns.C2NResponseHandler(rec, req)
+
+	require.Equal(t, http.StatusNoContent, rec.Code)
+
+	select {
+	case resp := <-respCh:
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Equal(t, "ok", string(body))
+		require.NoError(t, resp.Body.Close())
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for c2n response")
+	}
 }
 
 func TestRFC2136DNSManager(t *testing.T) {

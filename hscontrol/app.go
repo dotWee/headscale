@@ -104,6 +104,7 @@ type Headscale struct {
 	authProvider   AuthProvider
 	mapBatcher     *mapper.Batcher
 	serveDNS       serveDNSManager
+	c2n            *c2nManager
 
 	clientStreamsOpen sync.WaitGroup
 }
@@ -139,6 +140,7 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 		noisePrivateKey:   noisePrivateKey,
 		clientStreamsOpen: sync.WaitGroup{},
 		state:             s,
+		c2n:               newC2NManager(),
 	}
 
 	app.serveDNS, err = newServeDNSManager(cfg)

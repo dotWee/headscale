@@ -33,6 +33,7 @@ type Change struct {
 	PeersRemoved []types.NodeID
 	PeerPatches  []*tailcfg.PeerChange
 	SendAllPeers bool
+	PingRequest  *tailcfg.PingRequest
 
 	// RequiresRuntimePeerComputation indicates that peer visibility
 	// must be computed at runtime per-node. Used for policy changes
@@ -69,6 +70,9 @@ func (r Change) Merge(other Change) Change {
 	merged.PeersChanged = uniqueNodeIDs(append(r.PeersChanged, other.PeersChanged...))
 	merged.PeersRemoved = uniqueNodeIDs(append(r.PeersRemoved, other.PeersRemoved...))
 	merged.PeerPatches = append(r.PeerPatches, other.PeerPatches...)
+	if merged.PingRequest == nil {
+		merged.PingRequest = other.PingRequest
+	}
 
 	// Preserve OriginNode for self-update detection.
 	// If either change has OriginNode set, keep it so the mapper
@@ -98,6 +102,10 @@ func (r Change) IsEmpty() bool {
 	}
 
 	if r.RequiresRuntimePeerComputation {
+		return false
+	}
+
+	if r.PingRequest != nil {
 		return false
 	}
 
@@ -143,6 +151,10 @@ func (r Change) Type() string {
 
 	if r.RequiresRuntimePeerComputation {
 		return "policy"
+	}
+
+	if r.PingRequest != nil {
+		return "ping"
 	}
 
 	if len(r.PeerPatches) > 0 && len(r.PeersChanged) == 0 && len(r.PeersRemoved) == 0 && !r.SendAllPeers {
@@ -298,6 +310,14 @@ func PeerPatched(reason string, patches ...*tailcfg.PeerChange) Change {
 	return Change{
 		Reason:      reason,
 		PeerPatches: patches,
+	}
+}
+
+func C2N(nodeID types.NodeID, ping *tailcfg.PingRequest) Change {
+	return Change{
+		Reason:      "c2n request",
+		TargetNode:  nodeID,
+		PingRequest: ping,
 	}
 }
 

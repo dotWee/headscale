@@ -104,3 +104,32 @@ func TestUpdateServiceCollectionFromHostinfoClearsMappings(t *testing.T) {
 	require.Nil(t, st.ServiceIPMappings(1))
 	require.False(t, st.ServiceMetadataNeedsRefresh(1))
 }
+
+func TestServiceRefreshLifecycle(t *testing.T) {
+	t.Parallel()
+
+	st := newServeServiceTestState(t)
+	st.UpdateServiceCollectionFromHostinfo(
+		1,
+		nil,
+		&tailcfg.Hostinfo{
+			ServicesHash: "hash-1",
+			WireIngress:  true,
+		},
+	)
+
+	require.True(t, st.BeginServiceRefresh(1))
+	require.False(t, st.BeginServiceRefresh(1))
+
+	st.MarkServiceRefreshFailed(1)
+	require.True(t, st.BeginServiceRefresh(1))
+
+	_, err := st.SetVIPServices(1, &tailcfg.C2NVIPServicesResponse{
+		ServicesHash: "hash-1",
+		VIPServices: []*tailcfg.VIPService{
+			{Name: "svc:web", Active: true},
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, st.BeginServiceRefresh(1))
+}

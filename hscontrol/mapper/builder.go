@@ -277,6 +277,11 @@ func (b *MapResponseBuilder) WithPeerChangedPatch(changes []*tailcfg.PeerChange)
 	return b
 }
 
+func (b *MapResponseBuilder) WithPingRequest(pr *tailcfg.PingRequest) *MapResponseBuilder {
+	b.resp.PingRequest = pr
+	return b
+}
+
 // WithPeersRemoved adds removed peer IDs.
 func (b *MapResponseBuilder) WithPeersRemoved(removedIDs ...types.NodeID) *MapResponseBuilder {
 	tailscaleIDs := make([]tailcfg.NodeID, 0, len(removedIDs))

@@ -180,7 +180,7 @@ func (h *Headscale) NoiseUpgradeHandler(
 
 		r.Route("/webclient", func(r chi.Router) {})
 
-		r.Post("/c2n", ns.NotImplementedHandler)
+		r.Post("/c2n/{token}", ns.C2NResponseHandler)
 	})
 
 	ns.httpBaseConfig = &http.Server{
