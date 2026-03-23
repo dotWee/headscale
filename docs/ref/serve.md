@@ -15,6 +15,7 @@ Headscale currently supports:
 - HTTPS certificate provisioning support for Serve when `serve.https.enabled` is configured
 - ACME DNS-01 challenge updates through RFC2136
 - Operator-controlled Funnel capability advertisement and allowed-port policy
+- optional collection of client-reported service-host metadata
 
 Headscale currently does not support:
 
@@ -23,6 +24,7 @@ Headscale currently does not support:
 - Service-host configuration import/export via `tailscale serve get-config` and `tailscale serve set-config`
 - Additional DNS challenge providers beyond RFC2136
 - full managed-control-plane Funnel parity, including validated public ingress behavior
+- VIP service assignment and service-host distribution
 
 ## How the implementation works
 
@@ -45,6 +47,7 @@ Headscale provides the server-side primitives that current Tailscale clients exp
 - `POST /machine/feature/query` for Serve/Funnel capability checks
 - `POST /machine/set-dns` for ACME DNS-01 TXT record updates
 - Funnel node capabilities and allowed-port advertisement via node `CapMap`
+- optional `CollectServices` map-response support so clients can report service metadata
 
 ## Private HTTP Serve
 
@@ -105,6 +108,26 @@ Current requirements:
 - `serve.funnel.enabled` requires `serve.https.enabled`
 - `serve.funnel.allow_ports` must be set explicitly
 - allowed ports may be individual ports or inclusive ranges
+
+## Service Metadata Collection
+
+Headscale can optionally ask clients to report service-host metadata by setting:
+
+```yaml title="config.yaml"
+serve:
+  service:
+    collect: true
+```
+
+When enabled, Headscale sets `CollectServices=true` in map responses. Current clients can then include fields such as `Hostinfo.ServicesHash` and `Hostinfo.WireIngress` in later updates.
+
+This is only groundwork for future service-host support. It does not implement:
+
+- `tailscale serve --service`
+- `tailscale serve advertise`
+- `tailscale serve drain`
+- VIP service IP allocation or distribution
+- control-plane `c2n` service discovery such as `/vip-services`
 
 ## Private HTTPS Serve
 

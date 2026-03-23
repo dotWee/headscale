@@ -176,9 +176,10 @@ type LetsEncryptConfig struct {
 }
 
 type ServeConfig struct {
-	Domain string
-	HTTPS  ServeHTTPSConfig
-	Funnel ServeFunnelConfig
+	Domain  string
+	HTTPS   ServeHTTPSConfig
+	Funnel  ServeFunnelConfig
+	Service ServeServiceConfig
 }
 
 type ServeHTTPSConfig struct {
@@ -196,6 +197,10 @@ type ServeDNSConfig struct {
 type ServeFunnelConfig struct {
 	Enabled    bool
 	AllowPorts []string
+}
+
+type ServeServiceConfig struct {
+	Collect bool
 }
 
 type RFC2136Config struct {
@@ -442,6 +447,7 @@ func LoadConfig(path string, isFile bool) error {
 	viper.SetDefault("serve.https.dns.rfc2136.tsig_algorithm", "hmac-sha256.")
 	viper.SetDefault("serve.funnel.enabled", false)
 	viper.SetDefault("serve.funnel.allow_ports", []string{})
+	viper.SetDefault("serve.service.collect", false)
 
 	viper.SetDefault("ephemeral_node_inactivity_timeout", "120s")
 
@@ -661,6 +667,9 @@ func serveConfig() ServeConfig {
 		Funnel: ServeFunnelConfig{
 			Enabled:    viper.GetBool("serve.funnel.enabled"),
 			AllowPorts: serveFunnelAllowPorts(),
+		},
+		Service: ServeServiceConfig{
+			Collect: viper.GetBool("serve.service.collect"),
 		},
 	}
 }

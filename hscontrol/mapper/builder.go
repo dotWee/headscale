@@ -111,9 +111,9 @@ func (b *MapResponseBuilder) WithDomain() *MapResponseBuilder {
 	return b
 }
 
-// WithCollectServicesDisabled sets the collect services flag to false.
-func (b *MapResponseBuilder) WithCollectServicesDisabled() *MapResponseBuilder {
-	b.resp.CollectServices.Set(false)
+// WithCollectServices sets the collect services flag.
+func (b *MapResponseBuilder) WithCollectServices(collect bool) *MapResponseBuilder {
+	b.resp.CollectServices.Set(collect)
 	return b
 }
 

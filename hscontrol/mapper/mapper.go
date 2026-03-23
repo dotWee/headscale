@@ -181,7 +181,7 @@ func (m *mapper) fullMapResponse(
 		WithSelfNode().
 		WithDERPMap().
 		WithDomain().
-		WithCollectServicesDisabled().
+		WithCollectServices(m.cfg.Serve.Service.Collect).
 		WithDebugConfig().
 		WithSSHPolicy().
 		WithDNSConfig().

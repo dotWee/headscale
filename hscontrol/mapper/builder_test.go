@@ -78,7 +78,7 @@ func TestMapResponseBuilder_WithDomain(t *testing.T) {
 	assert.False(t, builder.hasErrors())
 }
 
-func TestMapResponseBuilder_WithCollectServicesDisabled(t *testing.T) {
+func TestMapResponseBuilder_WithCollectServices(t *testing.T) {
 	cfg := &types.Config{}
 	mockState := &state.State{}
 	m := &mapper{
@@ -89,9 +89,17 @@ func TestMapResponseBuilder_WithCollectServicesDisabled(t *testing.T) {
 	nodeID := types.NodeID(1)
 
 	builder := m.NewMapResponseBuilder(nodeID).
-		WithCollectServicesDisabled()
+		WithCollectServices(true)
 
 	value, isSet := builder.resp.CollectServices.Get()
+	assert.True(t, isSet)
+	assert.True(t, value)
+	assert.False(t, builder.hasErrors())
+
+	builder = m.NewMapResponseBuilder(nodeID).
+		WithCollectServices(false)
+
+	value, isSet = builder.resp.CollectServices.Get()
 	assert.True(t, isSet)
 	assert.False(t, value)
 	assert.False(t, builder.hasErrors())
@@ -207,7 +215,7 @@ func TestMapResponseBuilder_ErrorHandling(t *testing.T) {
 	// All subsequent calls should continue to work and accumulate errors
 	result := builder.
 		WithDomain().
-		WithCollectServicesDisabled().
+		WithCollectServices(false).
 		WithDebugConfig()
 
 	assert.True(t, result.hasErrors())
@@ -242,7 +250,7 @@ func TestMapResponseBuilder_ChainedCalls(t *testing.T) {
 	builder := m.NewMapResponseBuilder(nodeID).
 		WithCapabilityVersion(capVer).
 		WithDomain().
-		WithCollectServicesDisabled().
+		WithCollectServices(false).
 		WithDebugConfig()
 
 	// Verify all fields are set correctly
@@ -332,7 +340,7 @@ func TestMapResponseBuilder_MultipleErrors(t *testing.T) {
 	// All subsequent calls should continue to work
 	result := builder.
 		WithDomain().
-		WithCollectServicesDisabled()
+		WithCollectServices(false)
 
 	assert.True(t, result.hasErrors())
 	assert.Len(t, result.errs, 2) // nil error should be ignored

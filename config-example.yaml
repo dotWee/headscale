@@ -282,6 +282,15 @@ serve:
     allow_ports:
       - 443
 
+  service:
+    # Ask clients to report service-host metadata such as ServicesHash and
+    # WireIngress in their hostinfo updates.
+    #
+    # This is groundwork for future service-host support. It does not by itself
+    # implement VIP service assignment, advertise/drain, or C2N service
+    # discovery.
+    collect: false
+
 log:
   # Valid log levels: panic, fatal, error, warn, info, debug, trace
   level: info
