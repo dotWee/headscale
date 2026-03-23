@@ -4,6 +4,23 @@ Headscale supports the control-plane pieces required for private `tailscale serv
 
 This page describes what is implemented, how it works, and which parts are still out of scope.
 
+## Completion status
+
+Headscale is currently close to feature-complete for private node-scoped tailnet Serve, but not for the full Tailscale Serve product surface.
+
+Current rough status:
+
+- Private node-scoped Serve: mostly implemented
+- Funnel: partially implemented
+- Service-host Serve: not implemented
+
+In practical terms this means:
+
+- using `tailscale serve` on a node to expose HTTP or TCP services inside the tailnet is supported
+- enabling HTTPS for private Serve is supported with RFC2136-backed DNS-01 updates
+- enabling Funnel capability and port policy is supported, but full managed public-ingress parity is not
+- service-host workflows from newer Tailscale clients are still out of scope
+
 ## Support level
 
 Headscale currently supports:
@@ -25,6 +42,17 @@ Headscale currently does not support:
 - Additional DNS challenge providers beyond RFC2136
 - full managed-control-plane Funnel parity, including validated public ingress behavior
 - VIP service assignment and service-host distribution
+
+Status summary by area:
+
+| Area | Status | Notes |
+| --- | --- | --- |
+| Node-scoped private Serve | Supported | HTTP proxy, TCP forwarding, status/reset, HTTPS control-plane support |
+| Private Serve HTTPS | Supported | Requires `serve.https` and RFC2136 DNS-01 support |
+| Funnel capability and allowed-port policy | Partial | Client-side enablement works, but not full managed-control-plane parity |
+| Service metadata collection | Groundwork only | `CollectServices` can be enabled, but metadata is not consumed for VIP service hosting |
+| Service-host Serve | Not supported | No `--service`, `advertise`, `drain`, or VIP service mapping |
+| Full public Funnel behavior | Not supported | No complete public-ingress control-plane implementation |
 
 ## How the implementation works
 
@@ -129,6 +157,8 @@ This is only groundwork for future service-host support. It does not implement:
 - VIP service IP allocation or distribution
 - control-plane `c2n` service discovery such as `/vip-services`
 
+At the moment, enabling `serve.service.collect` should be understood as preparatory control-plane support, not as a signal that Headscale is compliant with Tailscale service-host Serve.
+
 ## Private HTTPS Serve
 
 HTTPS Serve requires Headscale to participate in certificate provisioning.
@@ -192,5 +222,7 @@ The current implementation is intentionally narrow:
 - No database migration is required
 - RFC2136 is the only built-in DNS challenge backend
 - Service-host and full Funnel parity still require additional upstream-style control-plane work
+
+The biggest remaining gap to official parity is service-host support. That work depends on control-plane `c2n` support and VIP service state management, not just additional CLI or mapper changes.
 
 This keeps Headscale aligned with current Tailscale client behavior while leaving room for future Funnel and service-hosting work.
