@@ -226,6 +226,9 @@ func (s *State) SetVIPServices(
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
+	node, ok := s.GetNodeByID(id)
+	serviceHostApproved := ok && node.Valid() && node.IsTagged()
+
 	oldState, hadOldState := st.nodes[id]
 	changed, releasedIPs := st.clearNodeLocked(id)
 	if len(releasedIPs) > 0 && s.ipAlloc != nil {
@@ -243,7 +246,7 @@ func (s *State) SetVIPServices(
 
 		clonedServices = append(clonedServices, svc.Clone())
 
-		if !svc.Active {
+		if !svc.Active || !serviceHostApproved {
 			continue
 		}
 

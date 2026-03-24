@@ -3,6 +3,7 @@ package state
 import (
 	"net/netip"
 	"testing"
+	"time"
 
 	hsdb "github.com/juanfont/headscale/hscontrol/db"
 	"github.com/juanfont/headscale/hscontrol/types"
@@ -12,11 +13,30 @@ import (
 
 func newServeServiceTestState(t *testing.T) *State {
 	t.Helper()
+	return newServeServiceTestStateForNode(t, &types.Node{
+		ID:        1,
+		Hostname:  "service-node",
+		GivenName: "service-node",
+		Tags:      []string{"tag:service"},
+	})
+}
+
+func newServeServiceTestStateForNode(t *testing.T, node *types.Node) *State {
+	t.Helper()
 
 	prefix4 := netip.MustParsePrefix("100.64.0.0/24")
 	prefix6 := netip.MustParsePrefix("fd7a:115c:a1e0::/120")
 	ipAlloc, err := hsdb.NewIPAllocator(nil, &prefix4, &prefix6, types.IPAllocationStrategySequential)
 	require.NoError(t, err)
+
+	if node == nil {
+		node = &types.Node{
+			ID:        1,
+			Hostname:  "service-node",
+			GivenName: "service-node",
+			Tags:      []string{"tag:service"},
+		}
+	}
 
 	return &State{
 		cfg: &types.Config{
@@ -25,6 +45,14 @@ func newServeServiceTestState(t *testing.T) *State {
 			},
 		},
 		ipAlloc: ipAlloc,
+		nodeStore: NewNodeStore(
+			types.Nodes{node},
+			func(nodes []types.NodeView) map[types.NodeID][]types.NodeView {
+				return map[types.NodeID][]types.NodeView{}
+			},
+			1,
+			10*time.Millisecond,
+		),
 	}
 }
 
@@ -192,4 +220,31 @@ func TestSetVIPServicesDoesNotPublishInactiveServices(t *testing.T) {
 	require.Len(t, st.serviceCollection.nodes[1].services, 1)
 	require.Equal(t, tailcfg.ServiceName("svc:web"), st.serviceCollection.nodes[1].services[0].Name)
 	require.False(t, st.serviceCollection.nodes[1].services[0].Active)
+}
+
+func TestSetVIPServicesDoesNotPublishForUntaggedNodes(t *testing.T) {
+	t.Parallel()
+
+	st := newServeServiceTestStateForNode(t, &types.Node{
+		ID:        1,
+		Hostname:  "user-node",
+		GivenName: "user-node",
+	})
+
+	ch, err := st.SetVIPServices(1, &tailcfg.C2NVIPServicesResponse{
+		ServicesHash: "hash-1",
+		VIPServices: []*tailcfg.VIPService{
+			{Name: "svc:web", Active: true},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, types.NodeID(1), ch.OriginNode)
+	require.True(t, ch.IncludeDNS)
+	require.Nil(t, st.ServiceIPMappings(1))
+	require.Empty(t, st.ServiceDNSRecords("headscale.net"))
+
+	st.serviceCollection.mu.RLock()
+	defer st.serviceCollection.mu.RUnlock()
+	require.Len(t, st.serviceCollection.nodes[1].services, 1)
+	require.Equal(t, tailcfg.ServiceName("svc:web"), st.serviceCollection.nodes[1].services[0].Name)
 }
