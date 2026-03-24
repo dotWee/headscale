@@ -251,6 +251,7 @@ jobs:
           - TestServeServiceHostPeerReachability
           - TestServeServiceHostAdvertiseAndDrain
           - TestServeServiceHostGetAndSetConfig
+          - TestServeServiceHostRejectsUntaggedNode
           - TestSSHOneUserToAll
           - TestSSHMultipleUsersAllToAll
           - TestSSHNoSSHConfigured

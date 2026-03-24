@@ -610,7 +610,7 @@ func TestServeServiceHostGetAndSetConfig(t *testing.T) {
 	}, 60*time.Second, 500*time.Millisecond, "peer should reach the restored api service after all set-config")
 }
 
-func TestServeServiceHostUntaggedNodeRequiresApproval(t *testing.T) {
+func TestServeServiceHostRejectsUntaggedNode(t *testing.T) {
 	IntegrationSkip(t)
 
 	spec := ScenarioSpec{
@@ -651,24 +651,10 @@ func TestServeServiceHostUntaggedNodeRequiresApproval(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	clientNode, err := scenario.CreateTailscaleNode(
-		"head",
-		tsic.WithNetwork(scenario.networks[scenario.testDefaultNetwork]),
-		tsic.WithNetfilter("off"),
-		tsic.WithPackages("curl"),
-		tsic.WithDockerWorkdir("/"),
-		tsic.WithAcceptRoutes(),
-	)
-	require.NoError(t, err)
-
 	err = serviceHost.Login(headscale.GetEndpoint(), authKey.GetKey())
-	require.NoError(t, err)
-	err = clientNode.Login(headscale.GetEndpoint(), authKey.GetKey())
 	require.NoError(t, err)
 
 	err = serviceHost.WaitForRunning(integrationutil.PeerSyncTimeout())
-	require.NoError(t, err)
-	err = clientNode.WaitForRunning(integrationutil.PeerSyncTimeout())
 	require.NoError(t, err)
 	err = scenario.WaitForTailscaleSync()
 	require.NoError(t, err)
@@ -683,33 +669,8 @@ func TestServeServiceHostUntaggedNodeRequiresApproval(t *testing.T) {
 	_, stderr, err = serviceHost.Execute([]string{
 		"tailscale", "serve", "--service=svc:web", "--bg", "--http", "80", "http://127.0.0.1:18087",
 	})
-	require.NoError(t, err, stderr)
-
-	var serviceURL string
-	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		status, err := clientNode.Status()
-		assert.NoError(c, err)
-		if !assert.NotNil(c, status.CurrentTailnet) {
-			return
-		}
-		serviceURL = fmt.Sprintf("http://web.%s", status.CurrentTailnet.MagicDNSSuffix)
-	}, 30*time.Second, 500*time.Millisecond, "client should have current tailnet status")
-
-	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		cfg := readServeStatusWithCollect(c, serviceHost)
-		assert.NotNil(c, cfg.Services["svc:web"])
-	}, 30*time.Second, 500*time.Millisecond, "local service config should still exist for the untagged node")
-
-	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		stdout, stderr, err := serviceHost.Execute([]string{"tailscale", "serve", "status"})
-		assert.NoError(c, err, stderr)
-		assert.Contains(c, stdout, "approval from an admin is required")
-	}, 30*time.Second, 500*time.Millisecond, "untagged service host should report that approval is required")
-
-	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		_, err := clientNode.CurlFailFast(serviceURL)
-		assert.Error(c, err)
-	}, 60*time.Second, 500*time.Millisecond, "peer should not reach a service hosted by an untagged node")
+	require.Error(t, err)
+	require.Contains(t, stderr, "service hosts must be tagged nodes")
 }
 
 func newServeTestEnv(

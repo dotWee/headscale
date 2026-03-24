@@ -38,6 +38,7 @@ Headscale currently supports:
 - basic service-host operation with `tailscale serve --service`
 - service lifecycle changes with `tailscale serve advertise` and `tailscale serve drain`
 - service config export/import with `tailscale serve get-config` and `tailscale serve set-config`
+- tagged-node enforcement for service hosts
 
 Headscale currently does not support:
 
@@ -53,7 +54,7 @@ Status summary by area:
 | Private Serve HTTPS | Supported | Requires `serve.https` and RFC2136 DNS-01 support |
 | Funnel capability and allowed-port policy | Partial | Client-side enablement works, but not full managed-control-plane parity |
 | Service metadata collection | Supported | `CollectServices` is consumed, `ServicesHash` changes are tracked, and fetched metadata is cached in memory |
-| Service-host Serve | Partial | `--service`, peer reachability, `advertise`/`drain`, and `get-config`/`set-config` now work, but broader parity is still incomplete |
+| Service-host Serve | Partial | `--service`, peer reachability, `advertise`/`drain`, `get-config`/`set-config`, and tagged-host enforcement now work, but broader parity is still incomplete |
 | Full public Funnel behavior | Not supported | No complete public-ingress control-plane implementation |
 
 ## How the implementation works
@@ -172,6 +173,7 @@ This is still only a partial service-host implementation. Headscale now supports
 - `tailscale serve set-config --service`
 - `tailscale serve get-config --all`
 - `tailscale serve set-config --all`
+- tagged-node enforcement for service hosts
 - peer reachability to advertised tailnet services through Headscale-managed VIPs and MagicDNS records
 
 It still does not implement:
@@ -179,6 +181,12 @@ It still does not implement:
 - the broader approval, policy, and managed-control-plane behavior of the hosted Tailscale product
 
 At the moment, enabling `serve.service.collect` should be understood as enabling Headscale's partial service-host control-plane implementation, not as a claim of full service-host parity.
+
+Current behavior around service-host approval:
+
+- service hosts must be tagged nodes
+- current Tailscale clients reject untagged `tailscale serve --service` usage locally
+- Headscale also withholds VIP publication for untagged nodes as a control-plane safety check
 
 ## Private HTTPS Serve
 
