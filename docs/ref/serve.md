@@ -30,7 +30,7 @@ Headscale currently supports:
 - Node-scoped HTTP proxy and TCP forwarding Serve modes
 - `tailscale serve status` and `tailscale serve reset` for node-scoped private Serve
 - HTTPS certificate provisioning support for Serve when `serve.https.enabled` is configured
-- ACME DNS-01 challenge updates through RFC2136
+- ACME DNS-01 challenge updates through RFC2136 and webhook-backed external DNS automation
 - Operator-controlled Funnel capability advertisement and allowed-port policy
 - collection of client-reported service-host metadata
 - an upstream-style C2N response path for node-targeted Serve requests
@@ -44,7 +44,7 @@ Headscale currently supports:
 
 Headscale currently does not support:
 
-- Additional DNS challenge providers beyond RFC2136
+- Provider-specific DNS integrations beyond RFC2136 and generic webhooks
 - full managed-control-plane Funnel parity, including validated public ingress behavior
 - full client workflow parity for service-host Serve
 
@@ -53,7 +53,7 @@ Status summary by area:
 | Area | Status | Notes |
 | --- | --- | --- |
 | Node-scoped private Serve | Supported | HTTP proxy, TCP forwarding, status/reset, HTTPS control-plane support |
-| Private Serve HTTPS | Supported | Requires `serve.https` and RFC2136 DNS-01 support |
+| Private Serve HTTPS | Supported | Requires `serve.https` and either RFC2136 or webhook DNS-01 support |
 | Funnel capability and allowed-port policy | Supported (control-plane) | Capability + `allow_ports` + `nodeAttrs` targeting are enforced; full public ingress parity is still pending |
 | Service metadata collection | Supported | `CollectServices` is consumed, `ServicesHash` changes are tracked, and fetched metadata is cached in memory |
 | Service-host Serve | Supported (private workflows) | `--service`, policy-gated VIP publication, peer reachability, `advertise`/`drain`, `get-config`/`set-config` are covered; broader hosted-product parity is still incomplete |
@@ -104,6 +104,8 @@ Headscale's integration coverage currently exercises:
 - `tailscale serve status`
 - `tailscale serve reset`
 - TCP forwarding with `tailscale serve --tcp`
+- node-scoped TLS-terminated TCP with `tailscale serve --tls-terminated-tcp`
+- node-scoped multi-port HTTP + TCP combinations
 - Funnel enable/disable status handling
 - Funnel allow/deny behavior via `nodeAttrs`
 - service-host HTTP reachability and lifecycle operations (`advertise`/`drain`)
@@ -111,6 +113,7 @@ Headscale's integration coverage currently exercises:
 - service-host TCP forwarding and TLS-terminated TCP
 - service-host multi-port behavior and reconnect
 - service-host VIP leak prevention with `autoApprovers.services`
+- service-host VIP withdrawal after policy revocation
 
 Other node-scoped Serve combinations may work because configuration remains client-local, but they are not yet covered by Headscale's integration suite.
 
@@ -131,6 +134,7 @@ This is intentionally narrower than full Funnel product parity:
 ### Public Funnel ingress boundary
 
 Headscale currently implements Funnel control-plane signaling, not the full hosted public-ingress product.
+On startup with `serve.funnel.enabled`, Headscale logs an explicit warning to avoid treating this as managed ingress parity.
 
 In practical terms:
 
@@ -185,6 +189,7 @@ Headscale now consumes those signals server-side:
 - Headscale can send a node-targeted C2N request and receive the raw HTTP response back over Noise
 - when a stale service hash is seen, Headscale can fetch `GET /vip-services`
 - cached VIP service metadata is stored in memory
+- after control-plane restart, nodes with a cached `ServicesHash` are re-marked stale so metadata can be re-fetched without waiting for a new Hostinfo change
 - assigned VIP service IPs are emitted back to the service host in `NodeAttrServiceHost`
 - those VIP addresses are also added to the node's `AllowedIPs`
 
@@ -212,6 +217,7 @@ Current behavior around service-host approval:
 - service publication can be restricted with ACL `autoApprovers.services`
 - current Tailscale clients reject untagged `tailscale serve --service` usage locally
 - Headscale also withholds VIP publication for untagged nodes as a control-plane safety check
+- Headscale withholds VIP publication for unapproved or inactive services while preserving local client config
 
 ## Private HTTPS Serve
 
@@ -248,14 +254,18 @@ serve:
         tsig_key_name: ""
         tsig_secret: ""
         tsig_algorithm: hmac-sha256.
+
+      webhook:
+        url: ""
+        bearer_token: ""
 ```
 
 Current requirements:
 
 - `serve.domain` defaults to `dns.base_domain` when empty, but it may be a separate delegated zone
 - the Serve zone must be publicly delegated
-- the zone must allow dynamic updates through RFC2136
-- if TSIG is required by your DNS server, the TSIG settings must be configured
+- if using RFC2136, the zone must allow dynamic updates and TSIG should be configured when required
+- if using webhook, the configured endpoint must accept JSON payloads for TXT challenge updates
 
 See [Configuration](configuration.md), [DNS](dns.md), and [TLS](tls.md) for related settings.
 

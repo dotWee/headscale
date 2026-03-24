@@ -98,7 +98,21 @@ jobs:
           mkdir -p /tmp/go-cache
           tar -xzf /tmp/artifacts/go-cache.tar.gz -C /tmp/go-cache
           ls -la /tmp/go-cache/ /tmp/go-cache/.cache/
+      - name: Pebble E2E preflight
+        id: pebble_preflight
+        if: ${{ inputs.test == 'TestServeHTTPSE2EPebble' }}
+        run: |
+          if [ -z "${HEADSCALE_PEBBLE_DNS_NAMESERVER}" ] || [ -z "${HEADSCALE_PEBBLE_DNS_ZONE}" ]; then
+            echo "::notice::Skipping Pebble HTTPS E2E because HEADSCALE_PEBBLE_DNS_NAMESERVER or HEADSCALE_PEBBLE_DNS_ZONE is not configured."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          HEADSCALE_PEBBLE_DNS_NAMESERVER: ${{ secrets.HEADSCALE_PEBBLE_DNS_NAMESERVER }}
+          HEADSCALE_PEBBLE_DNS_ZONE: ${{ secrets.HEADSCALE_PEBBLE_DNS_ZONE }}
       - name: Run Integration Test
+        if: ${{ inputs.test != 'TestServeHTTPSE2EPebble' || steps.pebble_preflight.outputs.skip != 'true' }}
         env:
           HEADSCALE_INTEGRATION_HEADSCALE_IMAGE: headscale:${{ github.sha }}
           HEADSCALE_INTEGRATION_TAILSCALE_IMAGE: tailscale-head:${{ github.sha }}

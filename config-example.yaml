@@ -254,7 +254,7 @@ serve:
     enabled: false
 
     dns:
-      # Supported providers: rfc2136
+      # Supported providers: rfc2136, webhook
       provider: ""
       ttl: 120
       timeout: 5s
@@ -270,6 +270,12 @@ serve:
         tsig_key_name: ""
         tsig_secret: ""
         tsig_algorithm: hmac-sha256.
+
+      webhook:
+        # HTTP endpoint that accepts ACME DNS-01 update requests as JSON.
+        url: ""
+        # Optional bearer token used as Authorization header.
+        bearer_token: ""
 
   funnel:
     # Advertise Funnel capability to clients.

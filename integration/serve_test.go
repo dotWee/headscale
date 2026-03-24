@@ -178,6 +178,97 @@ func TestServeTCPPeerReachability(t *testing.T) {
 	}, 30*time.Second, 500*time.Millisecond, "peer should reach the served TCP endpoint")
 }
 
+func TestServeNodeScopedTLSTerminatedTCP(t *testing.T) {
+	IntegrationSkip(t)
+
+	env := newServeTestEnv(
+		t,
+		"serve-node-tls-terminated-tcp",
+		nil,
+		[]tsic.Option{
+			tsic.WithPackages("python3"),
+		},
+		[]tsic.Option{
+			tsic.WithPackages("curl"),
+			tsic.WithDockerWorkdir("/"),
+		},
+	)
+
+	_, stderr, err := env.serveNode.Execute([]string{
+		"sh",
+		"-c",
+		"mkdir -p /tmp/serve-node-tls && printf 'node-tls-ok\\n' >/tmp/serve-node-tls/index.html && python3 -m http.server 18130 --bind 127.0.0.1 --directory /tmp/serve-node-tls >/tmp/serve-node-tls.log 2>&1 &",
+	})
+	require.NoError(t, err, stderr)
+
+	_, stderr, err = env.serveNode.Execute([]string{
+		"tailscale", "serve", "--bg", "--tls-terminated-tcp", "9444", "tcp://127.0.0.1:18130",
+	})
+	require.NoError(t, err, stderr)
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, err := env.clientNode.CurlFailFast(fmt.Sprintf("https://%s:9444", env.serveFQDN))
+		assert.NoError(c, err)
+		assert.Contains(c, stdout, "node-tls-ok")
+	}, 60*time.Second, 500*time.Millisecond, "peer should reach node-scoped TLS-terminated TCP endpoint")
+}
+
+func TestServeNodeScopedMultiPort(t *testing.T) {
+	IntegrationSkip(t)
+
+	env := newServeTestEnv(
+		t,
+		"serve-node-multi-port",
+		nil,
+		[]tsic.Option{
+			tsic.WithPackages("python3"),
+		},
+		[]tsic.Option{
+			tsic.WithPackages("python3"),
+			tsic.WithDockerWorkdir("/"),
+		},
+	)
+
+	_, stderr, err := env.serveNode.Execute([]string{
+		"sh",
+		"-c",
+		"mkdir -p /tmp/serve-node-multi && printf 'node-multi-http\\n' >/tmp/serve-node-multi/index.html && python3 -m http.server 18131 --bind 127.0.0.1 --directory /tmp/serve-node-multi >/tmp/serve-node-multi-http.log 2>&1 & python3 -c 'import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind((\"127.0.0.1\", 18132)); s.listen(1); conn, _ = s.accept(); data = conn.recv(1024); conn.sendall(b\"node-multi:\" + data); conn.close(); s.close()' >/tmp/serve-node-multi-tcp.log 2>&1 &",
+	})
+	require.NoError(t, err, stderr)
+
+	_, stderr, err = env.serveNode.Execute([]string{
+		"tailscale", "serve", "--bg", "--http", "80", "http://127.0.0.1:18131",
+	})
+	require.NoError(t, err, stderr)
+	_, stderr, err = env.serveNode.Execute([]string{
+		"tailscale", "serve", "--bg", "--tcp", "10082", "tcp://127.0.0.1:18132",
+	})
+	require.NoError(t, err, stderr)
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		cfg := readServeStatusWithCollect(c, env.serveNode)
+		hostPort := ipn.HostPort(net.JoinHostPort(env.serveFQDN, "80"))
+		assert.Contains(c, cfg.Web, hostPort)
+		assert.Contains(c, cfg.TCP, uint16(10082))
+	}, 30*time.Second, 500*time.Millisecond, "node-scoped serve status should contain HTTP and TCP ports")
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, err := env.clientNode.CurlFailFast(fmt.Sprintf("http://%s", env.serveFQDN))
+		assert.NoError(c, err)
+		assert.Contains(c, stdout, "node-multi-http")
+	}, 60*time.Second, 500*time.Millisecond, "peer should reach node-scoped HTTP endpoint")
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, stderr, err := env.clientNode.Execute([]string{
+			"python3",
+			"-c",
+			fmt.Sprintf("import socket; s=socket.create_connection((%q, 10082), timeout=5); s.sendall(b'ping'); print(s.recv(1024).decode()); s.close()", env.serveFQDN),
+		})
+		assert.NoError(c, err, stderr)
+		assert.Contains(c, stdout, "node-multi:ping")
+	}, 60*time.Second, 500*time.Millisecond, "peer should reach node-scoped TCP endpoint")
+}
+
 func TestFunnelToggleStatus(t *testing.T) {
 	IntegrationSkip(t)
 
@@ -1074,6 +1165,75 @@ func TestServeServiceHostPolicyPreventsVIPLeak(t *testing.T) {
 		_, err := clientNode.CurlFailFast(deniedURL)
 		assert.Error(c, err)
 	}, 60*time.Second, 500*time.Millisecond, "unapproved service should not leak VIP reachability")
+}
+
+func TestServeServiceHostPolicyRevocationWithdrawsVIP(t *testing.T) {
+	IntegrationSkip(t)
+
+	allowACL := &policyv2.Policy{
+		TagOwners: policyv2.TagOwners{
+			"tag:service": policyv2.Owners{new(policyv2.Username("user1@"))},
+		},
+		AutoApprovers: policyv2.AutoApproverPolicy{
+			Services: map[string]policyv2.AutoApprovers{
+				"svc:web": {new(policyv2.Tag("tag:service"))},
+			},
+		},
+	}
+	scenario, serviceHost, clientNode := newServiceHostPair(
+		t,
+		"serve-service-host-policy-revocation",
+		[]hsic.Option{hsic.WithACLPolicy(allowACL)},
+		[]tsic.Option{tsic.WithPackages("python3")},
+		[]tsic.Option{tsic.WithPackages("curl"), tsic.WithDockerWorkdir("/")},
+	)
+
+	_, stderr, err := serviceHost.Execute([]string{
+		"sh",
+		"-c",
+		"mkdir -p /tmp/serve-service-revoke && printf 'revoke-ok\\n' >/tmp/serve-service-revoke/index.html && python3 -m http.server 18120 --bind 127.0.0.1 --directory /tmp/serve-service-revoke >/tmp/serve-service-revoke.log 2>&1 &",
+	})
+	require.NoError(t, err, stderr)
+
+	_, stderr, err = serviceHost.Execute([]string{
+		"tailscale", "serve", "--service=svc:web", "--bg", "--http", "80", "http://127.0.0.1:18120",
+	})
+	require.NoError(t, err, stderr)
+
+	var serviceURL string
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		status, err := clientNode.Status()
+		assert.NoError(c, err)
+		if !assert.NotNil(c, status.CurrentTailnet) {
+			return
+		}
+		serviceURL = fmt.Sprintf("http://web.%s", status.CurrentTailnet.MagicDNSSuffix)
+	}, 30*time.Second, 500*time.Millisecond, "client should have current tailnet status")
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, err := clientNode.CurlFailFast(serviceURL)
+		assert.NoError(c, err)
+		assert.Contains(c, stdout, "revoke-ok")
+	}, 60*time.Second, 500*time.Millisecond, "service should be reachable before policy revocation")
+
+	headscale, err := scenario.Headscale()
+	require.NoError(t, err)
+	denyACL := &policyv2.Policy{
+		TagOwners: policyv2.TagOwners{
+			"tag:service": policyv2.Owners{new(policyv2.Username("user1@"))},
+		},
+		AutoApprovers: policyv2.AutoApproverPolicy{
+			Services: map[string]policyv2.AutoApprovers{
+				"svc:other": {new(policyv2.Tag("tag:service"))},
+			},
+		},
+	}
+	require.NoError(t, headscale.SetPolicy(denyACL))
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		_, err := clientNode.CurlFailFast(serviceURL)
+		assert.Error(c, err)
+	}, 60*time.Second, 500*time.Millisecond, "service should be withdrawn after policy revocation")
 }
 
 func newServiceHostPair(

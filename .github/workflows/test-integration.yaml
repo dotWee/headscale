@@ -258,6 +258,8 @@ jobs:
           - TestTailscaleNodesJoiningHeadcale
           - TestServeHTTPProxyStatusAndReset
           - TestServeTCPPeerReachability
+          - TestServeNodeScopedTLSTerminatedTCP
+          - TestServeNodeScopedMultiPort
           - TestFunnelToggleStatus
           - TestFunnelPolicyEnableDenyByTag
           - TestServeServiceHostPeerReachability
@@ -268,6 +270,7 @@ jobs:
           - TestServeServiceHostTLSTerminatedTCP
           - TestServeServiceHostMultiPortAndReconnect
           - TestServeServiceHostPolicyPreventsVIPLeak
+          - TestServeServiceHostPolicyRevocationWithdrawsVIP
           - TestSSHOneUserToAll
           - TestSSHMultipleUsersAllToAll
           - TestSSHNoSSHConfigured
