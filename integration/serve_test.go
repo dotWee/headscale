@@ -408,6 +408,208 @@ func TestServeServiceHostAdvertiseAndDrain(t *testing.T) {
 	}, 60*time.Second, 500*time.Millisecond, "peer should reach the service-host endpoint again after advertise")
 }
 
+func TestServeServiceHostGetAndSetConfig(t *testing.T) {
+	IntegrationSkip(t)
+
+	spec := ScenarioSpec{
+		NodesPerUser: 0,
+		Users:        []string{"user1"},
+		MaxWait:      dockertestMaxWait(),
+	}
+
+	scenario, err := NewScenario(spec)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		scenario.ShutdownAssertNoPanics(t)
+	})
+
+	err = scenario.CreateHeadscaleEnv(
+		[]tsic.Option{},
+		hsic.WithTestName("serve-service-host-config"),
+		hsic.WithConfigEnv(map[string]string{
+			"HEADSCALE_SERVE_SERVICE_COLLECT": "true",
+		}),
+	)
+	requireNoErrHeadscaleEnv(t, err)
+
+	headscale, err := scenario.Headscale()
+	require.NoError(t, err)
+
+	user, err := GetUserByName(headscale, "user1")
+	require.NoError(t, err)
+
+	serviceHostAuthKey, err := scenario.CreatePreAuthKeyWithTags(user.GetId(), true, false, []string{"tag:service"})
+	require.NoError(t, err)
+	clientAuthKey, err := scenario.CreatePreAuthKey(user.GetId(), true, false)
+	require.NoError(t, err)
+
+	serviceHost, err := scenario.CreateTailscaleNode(
+		"head",
+		tsic.WithNetwork(scenario.networks[scenario.testDefaultNetwork]),
+		tsic.WithNetfilter("off"),
+		tsic.WithPackages("python3"),
+	)
+	require.NoError(t, err)
+
+	clientNode, err := scenario.CreateTailscaleNode(
+		"head",
+		tsic.WithNetwork(scenario.networks[scenario.testDefaultNetwork]),
+		tsic.WithNetfilter("off"),
+		tsic.WithPackages("curl"),
+		tsic.WithDockerWorkdir("/"),
+		tsic.WithAcceptRoutes(),
+	)
+	require.NoError(t, err)
+
+	err = serviceHost.Login(headscale.GetEndpoint(), serviceHostAuthKey.GetKey())
+	require.NoError(t, err)
+	err = clientNode.Login(headscale.GetEndpoint(), clientAuthKey.GetKey())
+	require.NoError(t, err)
+
+	err = serviceHost.WaitForRunning(integrationutil.PeerSyncTimeout())
+	require.NoError(t, err)
+	err = clientNode.WaitForRunning(integrationutil.PeerSyncTimeout())
+	require.NoError(t, err)
+	err = scenario.WaitForTailscaleSync()
+	require.NoError(t, err)
+
+	_, stderr, err := serviceHost.Execute([]string{
+		"sh",
+		"-c",
+		"mkdir -p /tmp/serve-service-web /tmp/serve-service-api && printf 'service-web\\n' >/tmp/serve-service-web/index.html && printf 'service-api\\n' >/tmp/serve-service-api/index.html && python3 -m http.server 18085 --bind 127.0.0.1 --directory /tmp/serve-service-web >/tmp/serve-service-web.log 2>&1 & python3 -m http.server 18086 --bind 127.0.0.1 --directory /tmp/serve-service-api >/tmp/serve-service-api.log 2>&1 &",
+	})
+	require.NoError(t, err, stderr)
+
+	_, stderr, err = serviceHost.Execute([]string{
+		"tailscale", "serve", "--service=svc:web", "--bg", "--http", "80", "http://127.0.0.1:18085",
+	})
+	require.NoError(t, err, stderr)
+	_, stderr, err = serviceHost.Execute([]string{
+		"tailscale", "serve", "--service=svc:api", "--bg", "--http", "80", "http://127.0.0.1:18086",
+	})
+	require.NoError(t, err, stderr)
+
+	var webURL, apiURL string
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		status, err := clientNode.Status()
+		assert.NoError(c, err)
+		if !assert.NotNil(c, status.CurrentTailnet) {
+			return
+		}
+		webURL = fmt.Sprintf("http://web.%s", status.CurrentTailnet.MagicDNSSuffix)
+		apiURL = fmt.Sprintf("http://api.%s", status.CurrentTailnet.MagicDNSSuffix)
+	}, 30*time.Second, 500*time.Millisecond, "client should have current tailnet status")
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, err := clientNode.CurlFailFast(webURL)
+		assert.NoError(c, err)
+		assert.Contains(c, stdout, "service-web")
+	}, 60*time.Second, 500*time.Millisecond, "peer should initially reach the web service")
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, err := clientNode.CurlFailFast(apiURL)
+		assert.NoError(c, err)
+		assert.Contains(c, stdout, "service-api")
+	}, 60*time.Second, 500*time.Millisecond, "peer should initially reach the api service")
+
+	_, stderr, err = serviceHost.Execute([]string{
+		"sh", "-c", "tailscale serve get-config --service=svc:web > /tmp/web-service.json",
+	})
+	require.NoError(t, err, stderr)
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, stderr, err := serviceHost.Execute([]string{"cat", "/tmp/web-service.json"})
+		assert.NoError(c, err, stderr)
+		assert.Contains(c, stdout, "\"tcp:80\"")
+		assert.Contains(c, stdout, "18085")
+		assert.NotContains(c, stdout, "18086")
+	}, 30*time.Second, 500*time.Millisecond, "service config export should contain only the requested service")
+
+	_, stderr, err = serviceHost.Execute([]string{"tailscale", "serve", "clear", "svc:web"})
+	require.NoError(t, err, stderr)
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		cfg := readServeStatusWithCollect(c, serviceHost)
+		assert.Nil(c, cfg.Services["svc:web"])
+		assert.NotNil(c, cfg.Services["svc:api"])
+	}, 30*time.Second, 500*time.Millisecond, "clear should remove only the selected service")
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		_, err := clientNode.CurlFailFast(webURL)
+		assert.Error(c, err)
+	}, 60*time.Second, 500*time.Millisecond, "peer should stop reaching the cleared web service")
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, err := clientNode.CurlFailFast(apiURL)
+		assert.NoError(c, err)
+		assert.Contains(c, stdout, "service-api")
+	}, 60*time.Second, 500*time.Millisecond, "peer should still reach the other service")
+
+	_, stderr, err = serviceHost.Execute([]string{
+		"tailscale", "serve", "set-config", "--service=svc:web", "/tmp/web-service.json",
+	})
+	require.NoError(t, err, stderr)
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		cfg := readServeStatusWithCollect(c, serviceHost)
+		assert.NotNil(c, cfg.Services["svc:web"])
+		assert.NotNil(c, cfg.Services["svc:api"])
+	}, 30*time.Second, 500*time.Millisecond, "service set-config should restore the selected service")
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, err := clientNode.CurlFailFast(webURL)
+		assert.NoError(c, err)
+		assert.Contains(c, stdout, "service-web")
+	}, 60*time.Second, 500*time.Millisecond, "peer should reach the restored web service")
+
+	_, stderr, err = serviceHost.Execute([]string{
+		"sh", "-c", "tailscale serve get-config --all > /tmp/all-services.json",
+	})
+	require.NoError(t, err, stderr)
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, stderr, err := serviceHost.Execute([]string{"cat", "/tmp/all-services.json"})
+		assert.NoError(c, err, stderr)
+		assert.Contains(c, stdout, "svc:web")
+		assert.Contains(c, stdout, "svc:api")
+	}, 30*time.Second, 500*time.Millisecond, "all-services config export should contain both services")
+
+	_, stderr, err = serviceHost.Execute([]string{"tailscale", "serve", "clear", "svc:web"})
+	require.NoError(t, err, stderr)
+	_, stderr, err = serviceHost.Execute([]string{"tailscale", "serve", "clear", "svc:api"})
+	require.NoError(t, err, stderr)
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		cfg := readServeStatusWithCollect(c, serviceHost)
+		assert.Empty(c, cfg.Services)
+	}, 30*time.Second, 500*time.Millisecond, "clear should remove all service configs")
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		_, err := clientNode.CurlFailFast(webURL)
+		assert.Error(c, err)
+	}, 60*time.Second, 500*time.Millisecond, "peer should stop reaching the cleared web service after all clear")
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		_, err := clientNode.CurlFailFast(apiURL)
+		assert.Error(c, err)
+	}, 60*time.Second, 500*time.Millisecond, "peer should stop reaching the cleared api service after all clear")
+
+	_, stderr, err = serviceHost.Execute([]string{
+		"tailscale", "serve", "set-config", "--all", "/tmp/all-services.json",
+	})
+	require.NoError(t, err, stderr)
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		cfg := readServeStatusWithCollect(c, serviceHost)
+		assert.NotNil(c, cfg.Services["svc:web"])
+		assert.NotNil(c, cfg.Services["svc:api"])
+	}, 30*time.Second, 500*time.Millisecond, "all-services set-config should restore both services")
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, err := clientNode.CurlFailFast(webURL)
+		assert.NoError(c, err)
+		assert.Contains(c, stdout, "service-web")
+	}, 60*time.Second, 500*time.Millisecond, "peer should reach the restored web service after all set-config")
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, err := clientNode.CurlFailFast(apiURL)
+		assert.NoError(c, err)
+		assert.Contains(c, stdout, "service-api")
+	}, 60*time.Second, 500*time.Millisecond, "peer should reach the restored api service after all set-config")
+}
+
 func newServeTestEnv(
 	t *testing.T,
 	testName string,

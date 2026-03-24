@@ -37,10 +37,10 @@ Headscale currently supports:
 - in-memory VIP service caching and service-host capability emission for fetched service metadata
 - basic service-host operation with `tailscale serve --service`
 - service lifecycle changes with `tailscale serve advertise` and `tailscale serve drain`
+- service config export/import with `tailscale serve get-config` and `tailscale serve set-config`
 
 Headscale currently does not support:
 
-- Service-host configuration import/export via `tailscale serve get-config` and `tailscale serve set-config`
 - Additional DNS challenge providers beyond RFC2136
 - full managed-control-plane Funnel parity, including validated public ingress behavior
 - full client workflow parity for service-host Serve
@@ -53,7 +53,7 @@ Status summary by area:
 | Private Serve HTTPS | Supported | Requires `serve.https` and RFC2136 DNS-01 support |
 | Funnel capability and allowed-port policy | Partial | Client-side enablement works, but not full managed-control-plane parity |
 | Service metadata collection | Supported | `CollectServices` is consumed, `ServicesHash` changes are tracked, and fetched metadata is cached in memory |
-| Service-host Serve | Partial | `--service`, basic peer reachability, and `advertise`/`drain` now work, but config import/export and broader parity are still incomplete |
+| Service-host Serve | Partial | `--service`, peer reachability, `advertise`/`drain`, and `get-config`/`set-config` now work, but broader parity is still incomplete |
 | Full public Funnel behavior | Not supported | No complete public-ingress control-plane implementation |
 
 ## How the implementation works
@@ -168,14 +168,14 @@ This is still only a partial service-host implementation. Headscale now supports
 - `tailscale serve --service`
 - `tailscale serve advertise`
 - `tailscale serve drain`
-- peer reachability to advertised tailnet services through Headscale-managed VIPs and MagicDNS records
-
-It still does not implement:
-
 - `tailscale serve get-config --service`
 - `tailscale serve set-config --service`
 - `tailscale serve get-config --all`
 - `tailscale serve set-config --all`
+- peer reachability to advertised tailnet services through Headscale-managed VIPs and MagicDNS records
+
+It still does not implement:
+
 - the broader approval, policy, and managed-control-plane behavior of the hosted Tailscale product
 
 At the moment, enabling `serve.service.collect` should be understood as enabling Headscale's partial service-host control-plane implementation, not as a claim of full service-host parity.
@@ -232,7 +232,7 @@ See [Configuration](configuration.md), [DNS](dns.md), and [TLS](tls.md) for rela
 - Headscale only updates the ACME challenge TXT record. It does not manage the rest of your authoritative DNS zone.
 - Serve availability is still subject to ACLs. Headscale enabling Serve does not bypass policy.
 - Funnel enablement in Headscale currently means capability and port-policy advertisement to clients. It is not yet a claim of full public-ingress parity with Tailscale's managed control plane.
-- Service-hosting still requires additional control-plane support for full parity, especially the remaining config import/export and broader control-plane semantics around service workflows.
+- Service-hosting still requires additional control-plane support for full parity, especially the broader control-plane semantics around service workflows.
 
 ## Implementation notes
 
@@ -244,6 +244,6 @@ The current implementation is intentionally narrow:
 - RFC2136 is the only built-in DNS challenge backend
 - Service-host and full Funnel parity still require additional upstream-style control-plane work
 
-The biggest remaining gap to official parity is now the rest of the service-host and Funnel product surface. Headscale has the in-memory state, netmap side, `/vip-services` C2N fetch path, basic `--service` support, and `advertise`/`drain`, but it still lacks service config import/export and broader managed-control-plane parity.
+The biggest remaining gap to official parity is now the broader service-host and Funnel product surface. Headscale has the in-memory state, netmap side, `/vip-services` C2N fetch path, `--service`, `advertise`/`drain`, and `get-config`/`set-config`, but it still lacks the wider managed-control-plane parity of the hosted Tailscale product.
 
 This keeps Headscale aligned with current Tailscale client behavior while leaving room for future Funnel and service-hosting work.

@@ -250,6 +250,7 @@ jobs:
           - TestFunnelToggleStatus
           - TestServeServiceHostPeerReachability
           - TestServeServiceHostAdvertiseAndDrain
+          - TestServeServiceHostGetAndSetConfig
           - TestSSHOneUserToAll
           - TestSSHMultipleUsersAllToAll
           - TestSSHNoSSHConfigured
