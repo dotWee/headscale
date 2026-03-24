@@ -147,6 +147,10 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initializing serve DNS manager: %w", err)
 	}
+	if cfg.Serve.Funnel.Enabled {
+		log.Warn().
+			Msg("serve.funnel is enabled with control-plane capability and policy handling, but Headscale does not provide a built-in managed public ingress edge")
+	}
 
 	// Initialize ephemeral garbage collector
 	ephemeralGC := db.NewEphemeralGarbageCollector(func(ni types.NodeID) {

@@ -290,6 +290,10 @@ func (s *State) ReloadPolicy() ([]change.Change, error) {
 	// meaning that we do not need to send individual route changes.
 	cs = append(cs, rcs...)
 
+	if serviceChange := s.ReevaluateServiceHostApprovals(); !serviceChange.IsEmpty() {
+		cs = append(cs, serviceChange)
+	}
+
 	if len(rcs) > 0 || policyChanged {
 		log.Info().
 			Bool("policy.changed", policyChanged).

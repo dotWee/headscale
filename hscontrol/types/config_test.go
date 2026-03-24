@@ -314,6 +314,37 @@ func TestValidateServerConfigServeHTTPS(t *testing.T) {
 		require.NoError(t, validateServerConfig())
 	})
 
+	t.Run("accepts webhook provider", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		require.NoError(t, LoadConfig("", false))
+
+		viper.Set("server_url", "https://headscale.example.com")
+		viper.Set("noise.private_key_path", "/tmp/noise.key")
+		viper.Set("dns.base_domain", "example.com")
+		viper.Set("dns.override_local_dns", false)
+		viper.Set("serve.https.enabled", true)
+		viper.Set("serve.https.dns.provider", "webhook")
+		viper.Set("serve.https.dns.webhook.url", "https://dns-updater.example.com/challenge")
+
+		require.NoError(t, validateServerConfig())
+	})
+
+	t.Run("requires webhook url", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		require.NoError(t, LoadConfig("", false))
+
+		viper.Set("server_url", "https://headscale.example.com")
+		viper.Set("noise.private_key_path", "/tmp/noise.key")
+		viper.Set("dns.base_domain", "example.com")
+		viper.Set("dns.override_local_dns", false)
+		viper.Set("serve.https.enabled", true)
+		viper.Set("serve.https.dns.provider", "webhook")
+
+		err := validateServerConfig()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "serve.https.dns.webhook.url must be set")
+	})
+
 	t.Run("requires https for funnel", func(t *testing.T) {
 		t.Cleanup(viper.Reset)
 		require.NoError(t, LoadConfig("", false))

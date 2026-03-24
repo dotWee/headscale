@@ -192,6 +192,7 @@ type ServeDNSConfig struct {
 	TTL      uint32
 	Timeout  time.Duration
 	RFC2136  RFC2136Config
+	Webhook  ServeDNSWebhookConfig
 }
 
 type ServeFunnelConfig struct {
@@ -210,6 +211,11 @@ type RFC2136Config struct {
 	TSIGKeyName   string
 	TSIGSecret    string
 	TSIGAlgorithm string
+}
+
+type ServeDNSWebhookConfig struct {
+	URL         string
+	BearerToken string
 }
 
 type PKCEConfig struct {
@@ -445,6 +451,8 @@ func LoadConfig(path string, isFile bool) error {
 	viper.SetDefault("serve.https.dns.rfc2136.tsig_key_name", "")
 	viper.SetDefault("serve.https.dns.rfc2136.tsig_secret", "")
 	viper.SetDefault("serve.https.dns.rfc2136.tsig_algorithm", "hmac-sha256.")
+	viper.SetDefault("serve.https.dns.webhook.url", "")
+	viper.SetDefault("serve.https.dns.webhook.bearer_token", "")
 	viper.SetDefault("serve.funnel.enabled", false)
 	viper.SetDefault("serve.funnel.allow_ports", []string{})
 	viper.SetDefault("serve.service.collect", false)
@@ -583,6 +591,15 @@ func validateServerConfig() error {
 			default:
 				errorText += fmt.Sprintf("Fatal config error: serve.https.dns.rfc2136.network must be either udp or tcp, got %q\n", network)
 			}
+		case "webhook":
+			webhookURL := viper.GetString("serve.https.dns.webhook.url")
+			if webhookURL == "" {
+				errorText += "Fatal config error: serve.https.dns.webhook.url must be set when using the webhook provider\n"
+				break
+			}
+			if _, err := url.ParseRequestURI(webhookURL); err != nil {
+				errorText += fmt.Sprintf("Fatal config error: serve.https.dns.webhook.url must be a valid URL, got %q\n", webhookURL)
+			}
 		case "":
 			errorText += "Fatal config error: serve.https.dns.provider must be set when serve.https.enabled is true\n"
 		default:
@@ -661,6 +678,10 @@ func serveConfig() ServeConfig {
 					TSIGKeyName:   viper.GetString("serve.https.dns.rfc2136.tsig_key_name"),
 					TSIGSecret:    viper.GetString("serve.https.dns.rfc2136.tsig_secret"),
 					TSIGAlgorithm: viper.GetString("serve.https.dns.rfc2136.tsig_algorithm"),
+				},
+				Webhook: ServeDNSWebhookConfig{
+					URL:         viper.GetString("serve.https.dns.webhook.url"),
+					BearerToken: viper.GetString("serve.https.dns.webhook.bearer_token"),
 				},
 			},
 		},

@@ -620,3 +620,65 @@ func TestRFC2136DNSManagerRefreshesChallengeValue(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, []string{"token-new"}, secondInsert.Txt)
 }
+
+func TestWebhookDNSManager(t *testing.T) {
+	t.Parallel()
+
+	var (
+		gotAuthHeader string
+		gotPayload    map[string]string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuthHeader = r.Header.Get("Authorization")
+		defer r.Body.Close()
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotPayload))
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	cfg := &types.Config{
+		Serve: types.ServeConfig{
+			HTTPS: types.ServeHTTPSConfig{
+				Enabled: true,
+				DNS: types.ServeDNSConfig{
+					Provider: "webhook",
+					Timeout:  time.Second,
+					Webhook: types.ServeDNSWebhookConfig{
+						URL:         server.URL,
+						BearerToken: "secret-token",
+					},
+				},
+			},
+		},
+	}
+	manager, err := newServeDNSManager(cfg)
+	require.NoError(t, err)
+	require.IsType(t, &webhookDNSManager{}, manager)
+	require.NoError(t, manager.SetDNS(context.Background(), "_acme-challenge.node.example.com", "token"))
+	assert.Equal(t, "Bearer secret-token", gotAuthHeader)
+	assert.Equal(t, map[string]string{
+		"type":  "TXT",
+		"name":  "_acme-challenge.node.example.com",
+		"value": "token",
+	}, gotPayload)
+}
+
+func TestWebhookDNSManagerStatusError(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	manager := &webhookDNSManager{
+		url: server.URL,
+		timeout: timeouts{
+			request: time.Second,
+		},
+	}
+
+	err := manager.SetDNS(context.Background(), "_acme-challenge.node.example.com", "token")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "status 502")
+}

@@ -403,3 +403,83 @@ func equalVIPServices(a, b []*tailcfg.VIPService) bool {
 
 	return true
 }
+
+// ReevaluateServiceHostApprovals re-applies service-host approval policy to
+// already cached VIP metadata. This is used after policy reloads so services
+// that become disallowed are withdrawn without waiting for a new C2N refresh.
+func (s *State) ReevaluateServiceHostApprovals() change.Change {
+	if !s.shouldCollectServices() {
+		return change.Change{}
+	}
+
+	st := s.ensureServiceCollectionState()
+	st.mu.Lock()
+
+	var (
+		changed     bool
+		releasedIPs []netip.Addr
+	)
+
+	for nodeID, nodeState := range st.nodes {
+		if len(nodeState.services) == 0 {
+			continue
+		}
+		if nodeState.approved == nil {
+			nodeState.approved = make(map[tailcfg.ServiceName]bool, len(nodeState.services))
+		}
+
+		for _, svc := range nodeState.services {
+			if svc == nil {
+				continue
+			}
+			oldApproved := nodeState.approved[svc.Name]
+			newApproved := svc.Active && s.IsServiceHostApproved(nodeID, svc.Name)
+			if oldApproved == newApproved {
+				continue
+			}
+			changed = true
+			nodeState.approved[svc.Name] = newApproved
+
+			if newApproved {
+				if _, ok := st.serviceIPs[svc.Name]; !ok {
+					ips, err := s.allocateVIPServiceIPsLocked()
+					if err != nil {
+						// Keep the previous approval state when allocation fails so
+						// we do not partially drop mappings during policy reload.
+						nodeState.approved[svc.Name] = oldApproved
+						continue
+					}
+					st.serviceIPs[svc.Name] = ips
+				}
+				if st.serviceOwners[svc.Name] == nil {
+					st.serviceOwners[svc.Name] = make(map[types.NodeID]struct{})
+				}
+				st.serviceOwners[svc.Name][nodeID] = struct{}{}
+
+				continue
+			}
+
+			owners := st.serviceOwners[svc.Name]
+			delete(owners, nodeID)
+			if len(owners) == 0 {
+				delete(st.serviceOwners, svc.Name)
+				releasedIPs = append(releasedIPs, st.serviceIPs[svc.Name]...)
+				delete(st.serviceIPs, svc.Name)
+			}
+		}
+
+		st.nodes[nodeID] = nodeState
+	}
+
+	st.mu.Unlock()
+
+	if len(releasedIPs) > 0 && s.ipAlloc != nil {
+		s.ipAlloc.FreeIPs(releasedIPs)
+	}
+
+	if changed {
+		return change.ExtraRecords()
+	}
+
+	return change.Change{}
+}

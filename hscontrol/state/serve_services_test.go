@@ -372,3 +372,63 @@ func TestSetVIPServicesPublishesWhenServiceApproved(t *testing.T) {
 	require.Len(t, mappings, 1)
 	require.Len(t, mappings["svc:web"], 2)
 }
+
+func TestReevaluateServiceHostApprovalsWithdrawsDeniedService(t *testing.T) {
+	t.Parallel()
+
+	user := types.User{
+		Model: gorm.Model{ID: 1},
+		Name:  "user1",
+	}
+	node := &types.Node{
+		ID:        1,
+		Hostname:  "service-node",
+		GivenName: "service-node",
+		Tags:      []string{"tag:service"},
+		IPv4:      iap("100.64.0.52"),
+		User:      &user,
+	}
+	node.UserID = &user.ID
+
+	st := newServeServiceTestStateForNode(t, node)
+
+	allowPolicy, err := policy.NewPolicyManager([]byte(`{
+  "tagOwners": {
+    "tag:service": ["user1@"]
+  },
+  "autoApprovers": {
+    "services": {
+      "svc:web": ["tag:service"]
+    }
+  }
+}`), []types.User{user}, types.Nodes{node}.ViewSlice())
+	require.NoError(t, err)
+	st.polMan = allowPolicy
+
+	_, err = st.SetVIPServices(1, &tailcfg.C2NVIPServicesResponse{
+		ServicesHash: "hash-1",
+		VIPServices: []*tailcfg.VIPService{
+			{Name: "svc:web", Active: true},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, st.ServiceIPMappings(1))
+
+	denyPolicy, err := policy.NewPolicyManager([]byte(`{
+  "tagOwners": {
+    "tag:service": ["user1@"]
+  },
+  "autoApprovers": {
+    "services": {
+      "svc:other": ["tag:service"]
+    }
+  }
+}`), []types.User{user}, types.Nodes{node}.ViewSlice())
+	require.NoError(t, err)
+	st.polMan = denyPolicy
+
+	ch := st.ReevaluateServiceHostApprovals()
+	require.True(t, ch.IncludeDNS)
+	require.Nil(t, st.ServiceIPMappings(1))
+	require.Empty(t, st.ServiceDNSRecords("headscale.net"))
+}

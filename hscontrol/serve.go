@@ -1,10 +1,13 @@
 package hscontrol
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"strings"
 	"time"
 
@@ -46,6 +49,12 @@ type rfc2136DNSManager struct {
 	timeout       timeouts
 }
 
+type webhookDNSManager struct {
+	url         string
+	bearerToken string
+	timeout     timeouts
+}
+
 type timeouts struct {
 	request time.Duration
 }
@@ -65,6 +74,14 @@ func newServeDNSManager(cfg *types.Config) (serveDNSManager, error) {
 			tsigKeyName:   dns.Fqdn(cfg.Serve.HTTPS.DNS.RFC2136.TSIGKeyName),
 			tsigSecret:    cfg.Serve.HTTPS.DNS.RFC2136.TSIGSecret,
 			tsigAlgorithm: cmpOr(cfg.Serve.HTTPS.DNS.RFC2136.TSIGAlgorithm, dns.HmacSHA256),
+			timeout: timeouts{
+				request: cfg.Serve.HTTPS.DNS.Timeout,
+			},
+		}, nil
+	case "webhook":
+		return &webhookDNSManager{
+			url:         cfg.Serve.HTTPS.DNS.Webhook.URL,
+			bearerToken: cfg.Serve.HTTPS.DNS.Webhook.BearerToken,
 			timeout: timeouts{
 				request: cfg.Serve.HTTPS.DNS.Timeout,
 			},
@@ -130,6 +147,49 @@ func (m *rfc2136DNSManager) SetDNS(ctx context.Context, name, value string) erro
 	}
 	if resp.Rcode != dns.RcodeSuccess {
 		return fmt.Errorf("sending RFC2136 update for %q via %q: %s", fqdn, m.nameserver, dns.RcodeToString[resp.Rcode])
+	}
+
+	return nil
+}
+
+func (m *webhookDNSManager) SetDNS(ctx context.Context, name, value string) error {
+	payload, err := json.Marshal(map[string]string{
+		"type":  "TXT",
+		"name":  name,
+		"value": value,
+	})
+	if err != nil {
+		return fmt.Errorf("marshalling webhook DNS payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		m.url,
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		return fmt.Errorf("creating webhook DNS request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if m.bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+m.bearerToken)
+	}
+
+	client := &http.Client{Timeout: m.timeout.request}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("sending webhook DNS update for %q via %q: %w", name, m.url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf(
+			"sending webhook DNS update for %q via %q: status %d",
+			name,
+			m.url,
+			resp.StatusCode,
+		)
 	}
 
 	return nil
