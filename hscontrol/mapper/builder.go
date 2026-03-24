@@ -155,7 +155,7 @@ func (b *MapResponseBuilder) WithDNSConfig() *MapResponseBuilder {
 		return b
 	}
 
-	b.resp.DNSConfig = generateDNSConfig(b.mapper.cfg, node)
+	b.resp.DNSConfig = generateDNSConfig(b.mapper.cfg, b.mapper.state, node)
 
 	return b
 }

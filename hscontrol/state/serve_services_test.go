@@ -38,7 +38,6 @@ func TestUpdateServiceCollectionFromHostinfoMarksRefresh(t *testing.T) {
 		nil,
 		&tailcfg.Hostinfo{
 			ServicesHash: "hash-1",
-			WireIngress:  true,
 		},
 	)
 
@@ -56,7 +55,6 @@ func TestSetVIPServicesAllocatesMappings(t *testing.T) {
 		nil,
 		&tailcfg.Hostinfo{
 			ServicesHash: "hash-1",
-			WireIngress:  true,
 		},
 	)
 
@@ -68,6 +66,7 @@ func TestSetVIPServicesAllocatesMappings(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, types.NodeID(1), ch.OriginNode)
+	require.True(t, ch.IncludeDNS)
 	require.False(t, st.ServiceMetadataNeedsRefresh(1))
 
 	mappings := st.ServiceIPMappings(1)
@@ -93,7 +92,6 @@ func TestUpdateServiceCollectionFromHostinfoClearsMappings(t *testing.T) {
 		1,
 		&tailcfg.Hostinfo{
 			ServicesHash: "hash-1",
-			WireIngress:  true,
 		},
 		&tailcfg.Hostinfo{
 			WireIngress: false,
@@ -101,6 +99,7 @@ func TestUpdateServiceCollectionFromHostinfoClearsMappings(t *testing.T) {
 	)
 
 	require.Equal(t, types.NodeID(1), ch.OriginNode)
+	require.True(t, ch.IncludeDNS)
 	require.Nil(t, st.ServiceIPMappings(1))
 	require.False(t, st.ServiceMetadataNeedsRefresh(1))
 }
@@ -114,7 +113,6 @@ func TestServiceRefreshLifecycle(t *testing.T) {
 		nil,
 		&tailcfg.Hostinfo{
 			ServicesHash: "hash-1",
-			WireIngress:  true,
 		},
 	)
 
@@ -132,4 +130,42 @@ func TestServiceRefreshLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.False(t, st.BeginServiceRefresh(1))
+}
+
+func TestUpdateServiceCollectionFromHostinfoDoesNotRequireWireIngress(t *testing.T) {
+	t.Parallel()
+
+	st := newServeServiceTestState(t)
+
+	ch := st.UpdateServiceCollectionFromHostinfo(
+		1,
+		nil,
+		&tailcfg.Hostinfo{
+			ServicesHash: "hash-1",
+			WireIngress:  false,
+		},
+	)
+
+	require.True(t, ch.IsEmpty())
+	require.True(t, st.ServiceMetadataNeedsRefresh(1))
+}
+
+func TestServiceDNSRecords(t *testing.T) {
+	t.Parallel()
+
+	st := newServeServiceTestState(t)
+
+	_, err := st.SetVIPServices(1, &tailcfg.C2NVIPServicesResponse{
+		ServicesHash: "hash-1",
+		VIPServices: []*tailcfg.VIPService{
+			{Name: "svc:web", Active: true},
+		},
+	})
+	require.NoError(t, err)
+
+	records := st.ServiceDNSRecords("headscale.net")
+	require.Equal(t, []tailcfg.DNSRecord{
+		{Name: "web.headscale.net", Type: "A", Value: "100.64.0.1"},
+		{Name: "web.headscale.net", Type: "AAAA", Value: "fd7a:115c:a1e0::1"},
+	}, records)
 }

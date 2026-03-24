@@ -88,6 +88,7 @@ func TestDNSConfigMapResponse(t *testing.T) {
 						HTTPS:  types.ServeHTTPSConfig{Enabled: tt.serveHTTPS},
 					},
 				},
+				nil,
 				nodeInShared1.View(),
 			)
 

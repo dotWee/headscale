@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+	"sort"
 	"sync"
 
 	"github.com/juanfont/headscale/hscontrol/types"
@@ -80,6 +81,41 @@ func (s *State) ServiceIPMappings(id types.NodeID) tailcfg.ServiceIPMappings {
 	return mappings
 }
 
+func (s *State) ServiceDNSRecords(domain string) []tailcfg.DNSRecord {
+	if !s.shouldCollectServices() || s.serviceCollection == nil || domain == "" {
+		return nil
+	}
+
+	s.serviceCollection.mu.RLock()
+	defer s.serviceCollection.mu.RUnlock()
+
+	serviceNames := make([]tailcfg.ServiceName, 0, len(s.serviceCollection.serviceIPs))
+	for svc := range s.serviceCollection.serviceIPs {
+		serviceNames = append(serviceNames, svc)
+	}
+	sort.Slice(serviceNames, func(i, j int) bool {
+		return serviceNames[i] < serviceNames[j]
+	})
+
+	records := make([]tailcfg.DNSRecord, 0, len(serviceNames)*2)
+	for _, svc := range serviceNames {
+		fqdn := svc.WithoutPrefix() + "." + domain
+		for _, addr := range s.serviceCollection.serviceIPs[svc] {
+			recordType := "A"
+			if addr.Is6() {
+				recordType = "AAAA"
+			}
+			records = append(records, tailcfg.DNSRecord{
+				Name:  fqdn,
+				Type:  recordType,
+				Value: addr.String(),
+			})
+		}
+	}
+
+	return records
+}
+
 func (s *State) ServiceMetadataNeedsRefresh(id types.NodeID) bool {
 	if !s.shouldCollectServices() || s.serviceCollection == nil {
 		return false
@@ -143,13 +179,13 @@ func (s *State) UpdateServiceCollectionFromHostinfo(
 	oldHash, oldIngress := serviceSignals(oldHI)
 	newHash, newIngress := serviceSignals(newHI)
 
-	if !newIngress || newHash == "" {
+	if newHash == "" {
 		changed, releasedIPs := st.clearNodeLocked(id)
 		if len(releasedIPs) > 0 && s.ipAlloc != nil {
 			s.ipAlloc.FreeIPs(releasedIPs)
 		}
 		if changed {
-			return change.NodeAdded(id)
+			return change.NodeAdded(id).Merge(change.ExtraRecords())
 		}
 
 		return change.Change{}
@@ -168,7 +204,7 @@ func (s *State) UpdateServiceCollectionFromHostinfo(
 			refreshing:   false,
 		}
 		if changed {
-			return change.NodeAdded(id)
+			return change.NodeAdded(id).Merge(change.ExtraRecords())
 		}
 	}
 
@@ -236,7 +272,7 @@ func (s *State) SetVIPServices(
 	}
 
 	if changed || len(clonedServices) > 0 {
-		return change.NodeAdded(id), nil
+		return change.NodeAdded(id).Merge(change.ExtraRecords()), nil
 	}
 
 	return change.Change{}, nil
@@ -295,6 +331,8 @@ func serviceSignals(hi *tailcfg.Hostinfo) (servicesHash string, wireIngress bool
 		return "", false
 	}
 
+	// ServicesHash is the upstream signal for c2n /vip-services refreshes.
+	// WireIngress is related to Funnel wiring and may be false for service-host Serve.
 	return hi.ServicesHash, hi.WireIngress
 }
 

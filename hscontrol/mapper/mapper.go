@@ -116,6 +116,7 @@ func generateUserProfiles(
 
 func generateDNSConfig(
 	cfg *types.Config,
+	state *state.State,
 	node types.NodeView,
 ) *tailcfg.DNSConfig {
 	if cfg.TailcfgDNSConfig == nil {
@@ -137,6 +138,14 @@ func generateDNSConfig(
 		} else {
 			dnsConfig.CertDomains = append(dnsConfig.CertDomains, strings.TrimSuffix(strings.ToLower(fqdn), "."))
 		}
+	}
+
+	domain := cfg.BaseDomain
+	if domain == "" {
+		domain = cfg.Domain()
+	}
+	if state != nil {
+		dnsConfig.ExtraRecords = append(dnsConfig.ExtraRecords, state.ServiceDNSRecords(domain)...)
 	}
 
 	return dnsConfig
