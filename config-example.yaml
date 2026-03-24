@@ -290,8 +290,9 @@ serve:
     # /vip-services over C2N, and publish cached VIP service mappings back in
     # netmaps once they are known.
     #
-    # This still does not implement the full service-host workflow: there is no
-    # advertise/drain support and no C2N /vip-services fetch path yet.
+    # Service-host workflows are policy-gated. Use ACL policy
+    # autoApprovers.services to allow publication of specific service names
+    # from tagged nodes.
     collect: false
 
 log:

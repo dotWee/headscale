@@ -236,17 +236,3 @@ func cmpOr[T comparable](value, fallback T) T {
 	return value
 }
 
-func addServeConfigToDNSConfig(cfg *types.Config, node types.NodeView, dnsConfig *tailcfg.DNSConfig) error {
-	if !cfg.Serve.HTTPS.Enabled || dnsConfig == nil {
-		return nil
-	}
-
-	certDomain, err := serveCertDomain(cfg, node)
-	if err != nil {
-		return err
-	}
-
-	dnsConfig.CertDomains = append(dnsConfig.CertDomains, certDomain)
-
-	return nil
-}

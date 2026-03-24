@@ -33,6 +33,6 @@ provides on overview of Headscale's feature and compatibility with the Tailscale
     - [x] Basic registration
     - [x] Update user profile from identity provider
     - [ ] OIDC groups cannot be used in ACLs
-- [ ] [Funnel](https://tailscale.com/kb/1223/funnel) ([#1040](https://github.com/juanfont/headscale/issues/1040))
-- [x] [Serve](../ref/serve.md) (private node-scoped tailnet Serve is supported, service-host support is partial, and Funnel remains partial) ([#1921](https://github.com/juanfont/headscale/issues/1921))
+- [ ] [Funnel](https://tailscale.com/kb/1223/funnel) ([#1040](https://github.com/juanfont/headscale/issues/1040)) (capability, allow-ports, and policy targeting are implemented; full public-ingress parity remains open)
+- [x] [Serve](../ref/serve.md) (private node-scoped tailnet Serve and policy-gated service-host workflows are supported; full hosted-product parity remains partial) ([#1921](https://github.com/juanfont/headscale/issues/1921))
 - [ ] [Network flow logs](https://tailscale.com/kb/1219/network-flow-logs) ([#1687](https://github.com/juanfont/headscale/issues/1687))

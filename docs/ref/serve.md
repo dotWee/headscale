@@ -11,8 +11,8 @@ Headscale is currently close to feature-complete for private node-scoped tailnet
 Current rough status:
 
 - Private node-scoped Serve: mostly implemented
-- Funnel: partially implemented
-- Service-host Serve: partially implemented
+- Funnel: mostly implemented for control-plane policy/capability flows, public ingress still partial
+- Service-host Serve: mostly implemented for private tailnet workflows, public product parity still partial
 
 In practical terms this means:
 
@@ -35,10 +35,12 @@ Headscale currently supports:
 - collection of client-reported service-host metadata
 - an upstream-style C2N response path for node-targeted Serve requests
 - in-memory VIP service caching and service-host capability emission for fetched service metadata
-- basic service-host operation with `tailscale serve --service`
+- policy-gated service-host operation with `tailscale serve --service`
 - service lifecycle changes with `tailscale serve advertise` and `tailscale serve drain`
 - service config export/import with `tailscale serve get-config` and `tailscale serve set-config`
 - tagged-node enforcement for service hosts
+- `autoApprovers.services` for service-host publication approval
+- `nodeAttrs`-driven Funnel allow/deny targeting
 
 Headscale currently does not support:
 
@@ -52,9 +54,9 @@ Status summary by area:
 | --- | --- | --- |
 | Node-scoped private Serve | Supported | HTTP proxy, TCP forwarding, status/reset, HTTPS control-plane support |
 | Private Serve HTTPS | Supported | Requires `serve.https` and RFC2136 DNS-01 support |
-| Funnel capability and allowed-port policy | Partial | Client-side enablement works, but not full managed-control-plane parity |
+| Funnel capability and allowed-port policy | Supported (control-plane) | Capability + `allow_ports` + `nodeAttrs` targeting are enforced; full public ingress parity is still pending |
 | Service metadata collection | Supported | `CollectServices` is consumed, `ServicesHash` changes are tracked, and fetched metadata is cached in memory |
-| Service-host Serve | Partial | `--service`, peer reachability, `advertise`/`drain`, `get-config`/`set-config`, and tagged-host enforcement now work, but broader parity is still incomplete |
+| Service-host Serve | Supported (private workflows) | `--service`, policy-gated VIP publication, peer reachability, `advertise`/`drain`, `get-config`/`set-config` are covered; broader hosted-product parity is still incomplete |
 | Full public Funnel behavior | Not supported | No complete public-ingress control-plane implementation |
 
 ## How the implementation works
@@ -185,6 +187,7 @@ At the moment, enabling `serve.service.collect` should be understood as enabling
 Current behavior around service-host approval:
 
 - service hosts must be tagged nodes
+- service publication can be restricted with ACL `autoApprovers.services`
 - current Tailscale clients reject untagged `tailscale serve --service` usage locally
 - Headscale also withholds VIP publication for untagged nodes as a control-plane safety check
 

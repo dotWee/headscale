@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/juanfont/headscale/integration/tsic"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	policyv2 "github.com/juanfont/headscale/hscontrol/policy/v2"
 	"tailscale.com/ipn"
 )
 
@@ -74,6 +76,54 @@ func TestServeHTTPProxyStatusAndReset(t *testing.T) {
 		_, err := env.clientNode.CurlFailFast(fmt.Sprintf("http://%s", env.serveFQDN))
 		assert.Error(c, err)
 	}, 30*time.Second, 500*time.Millisecond, "peer should stop reaching the served HTTP proxy endpoint after reset")
+}
+
+func TestServeHTTPSE2EPebble(t *testing.T) {
+	IntegrationSkip(t)
+
+	if os.Getenv("HEADSCALE_INTEGRATION_PEBBLE_E2E") == "" {
+		t.Skip("set HEADSCALE_INTEGRATION_PEBBLE_E2E=1 to run Pebble-backed HTTPS serve e2e")
+	}
+
+	env := newServeTestEnv(
+		t,
+		"serve-https-pebble-e2e",
+		[]hsic.Option{
+			hsic.WithConfigEnv(map[string]string{
+				"HEADSCALE_DNS_OVERRIDE_LOCAL_DNS":             "false",
+				"HEADSCALE_SERVE_HTTPS_ENABLED":                "true",
+				"HEADSCALE_SERVE_HTTPS_DNS_PROVIDER":           "rfc2136",
+				"HEADSCALE_SERVE_HTTPS_DNS_RFC2136_NAMESERVER": "127.0.0.1:53",
+				"HEADSCALE_SERVE_HTTPS_DNS_RFC2136_ZONE":       "headscale.net",
+			}),
+		},
+		[]tsic.Option{
+			tsic.WithPackages("python3"),
+		},
+		[]tsic.Option{
+			tsic.WithPackages("curl"),
+			tsic.WithDockerWorkdir("/"),
+		},
+	)
+
+	_, stderr, err := env.serveNode.Execute([]string{
+		"sh",
+		"-c",
+		"mkdir -p /tmp/serve-https && printf 'https-ok\\n' >/tmp/serve-https/index.html && python3 -m http.server 18110 --bind 127.0.0.1 --directory /tmp/serve-https >/tmp/serve-https.log 2>&1 &",
+	})
+	require.NoError(t, err, stderr)
+
+	_, stderr, err = env.serveNode.Execute([]string{
+		"tailscale", "serve", "--bg", "https", "/=http://127.0.0.1:18110",
+	})
+	require.NoError(t, err, stderr)
+
+	httpsURL := fmt.Sprintf("https://%s", env.serveFQDN)
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, err := env.clientNode.CurlFailFast(httpsURL)
+		assert.NoError(c, err)
+		assert.Contains(c, stdout, "https-ok")
+	}, 120*time.Second, 2*time.Second, "peer should reach HTTPS serve endpoint once certificate issuance completes")
 }
 
 func TestServeTCPPeerReachability(t *testing.T) {
@@ -177,6 +227,131 @@ func TestFunnelToggleStatus(t *testing.T) {
 		hostPort := ipn.HostPort(net.JoinHostPort(env.serveFQDN, "443"))
 		assert.False(c, cfg.AllowFunnel[hostPort])
 	}, 30*time.Second, 500*time.Millisecond, "funnel should be disabled after turning it off")
+}
+
+func TestFunnelPolicyEnableDenyByTag(t *testing.T) {
+	IntegrationSkip(t)
+
+	spec := ScenarioSpec{
+		NodesPerUser: 0,
+		Users:        []string{"user1"},
+		MaxWait:      dockertestMaxWait(),
+	}
+
+	scenario, err := NewScenario(spec)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		scenario.ShutdownAssertNoPanics(t)
+	})
+
+	acl := &policyv2.Policy{
+		TagOwners: policyv2.TagOwners{
+			"tag:funnel": policyv2.Owners{new(policyv2.Username("user1@"))},
+			"tag:other":  policyv2.Owners{new(policyv2.Username("user1@"))},
+		},
+		NodeAttrs: []policyv2.NodeAttr{
+			{
+				Target: policyv2.Aliases{new(policyv2.Tag("tag:funnel"))},
+				Attr:   []string{"funnel"},
+			},
+		},
+	}
+
+	err = scenario.CreateHeadscaleEnv(
+		[]tsic.Option{},
+		hsic.WithTestName("serve-funnel-policy-enable-deny"),
+		hsic.WithACLPolicy(acl),
+		hsic.WithConfigEnv(map[string]string{
+			"HEADSCALE_DNS_OVERRIDE_LOCAL_DNS":             "false",
+			"HEADSCALE_SERVE_HTTPS_ENABLED":                "true",
+			"HEADSCALE_SERVE_HTTPS_DNS_PROVIDER":           "rfc2136",
+			"HEADSCALE_SERVE_HTTPS_DNS_RFC2136_NAMESERVER": "127.0.0.1:53",
+			"HEADSCALE_SERVE_HTTPS_DNS_RFC2136_ZONE":       "headscale.net",
+			"HEADSCALE_SERVE_FUNNEL_ENABLED":               "true",
+			"HEADSCALE_SERVE_FUNNEL_ALLOW_PORTS":           "443",
+		}),
+	)
+	requireNoErrHeadscaleEnv(t, err)
+
+	headscale, err := scenario.Headscale()
+	require.NoError(t, err)
+	user, err := GetUserByName(headscale, "user1")
+	require.NoError(t, err)
+
+	allowedKey, err := scenario.CreatePreAuthKeyWithTags(user.GetId(), true, false, []string{"tag:funnel"})
+	require.NoError(t, err)
+	deniedKey, err := scenario.CreatePreAuthKeyWithTags(user.GetId(), true, false, []string{"tag:other"})
+	require.NoError(t, err)
+
+	allowedNode, err := scenario.CreateTailscaleNode(
+		"head",
+		tsic.WithNetwork(scenario.networks[scenario.testDefaultNetwork]),
+		tsic.WithNetfilter("off"),
+		tsic.WithPackages("python3"),
+	)
+	require.NoError(t, err)
+	deniedNode, err := scenario.CreateTailscaleNode(
+		"head",
+		tsic.WithNetwork(scenario.networks[scenario.testDefaultNetwork]),
+		tsic.WithNetfilter("off"),
+		tsic.WithPackages("python3"),
+	)
+	require.NoError(t, err)
+
+	err = allowedNode.Login(headscale.GetEndpoint(), allowedKey.GetKey())
+	require.NoError(t, err)
+	err = deniedNode.Login(headscale.GetEndpoint(), deniedKey.GetKey())
+	require.NoError(t, err)
+	err = allowedNode.WaitForRunning(integrationutil.PeerSyncTimeout())
+	require.NoError(t, err)
+	err = deniedNode.WaitForRunning(integrationutil.PeerSyncTimeout())
+	require.NoError(t, err)
+
+	userState := scenario.GetOrCreateUser("user1")
+	userState.Clients[allowedNode.Hostname()] = allowedNode
+	userState.Clients[deniedNode.Hostname()] = deniedNode
+	err = scenario.WaitForTailscaleSync()
+	require.NoError(t, err)
+
+	_, stderr, err := allowedNode.Execute([]string{
+		"sh",
+		"-c",
+		"mkdir -p /tmp/funnel-allow && printf 'funnel-allow\\n' >/tmp/funnel-allow/index.html && python3 -m http.server 18100 --bind 127.0.0.1 --directory /tmp/funnel-allow >/tmp/funnel-allow.log 2>&1 &",
+	})
+	require.NoError(t, err, stderr)
+	_, stderr, err = deniedNode.Execute([]string{
+		"sh",
+		"-c",
+		"mkdir -p /tmp/funnel-deny && printf 'funnel-deny\\n' >/tmp/funnel-deny/index.html && python3 -m http.server 18101 --bind 127.0.0.1 --directory /tmp/funnel-deny >/tmp/funnel-deny.log 2>&1 &",
+	})
+	require.NoError(t, err, stderr)
+
+	_, stderr, err = allowedNode.Execute([]string{
+		"tailscale", "funnel", "--bg", "http://127.0.0.1:18100",
+	})
+	require.NoError(t, err, stderr)
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		cfg := readServeStatusWithCollect(c, allowedNode)
+		allowedFQDN := trimDotSuffix(allowedNode.MustFQDN())
+		hostPort := ipn.HostPort(net.JoinHostPort(allowedFQDN, "443"))
+		assert.True(c, cfg.AllowFunnel[hostPort])
+	}, 30*time.Second, 500*time.Millisecond, "funnel should be enabled for allowed node")
+
+	_, stderr, err = deniedNode.Execute([]string{
+		"tailscale", "funnel", "--bg", "http://127.0.0.1:18101",
+	})
+	// Clients can differ in behavior (hard error vs local config only), so enforce by status.
+	if err != nil {
+		assert.NotEmpty(t, stderr)
+	}
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		cfg := readServeStatusWithCollect(c, deniedNode)
+		deniedFQDN := trimDotSuffix(deniedNode.MustFQDN())
+		hostPort := ipn.HostPort(net.JoinHostPort(deniedFQDN, "443"))
+		assert.False(c, cfg.AllowFunnel[hostPort])
+	}, 30*time.Second, 500*time.Millisecond, "funnel should remain disabled for denied node")
 }
 
 func TestServeServiceHostPeerReachability(t *testing.T) {
@@ -671,6 +846,306 @@ func TestServeServiceHostRejectsUntaggedNode(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Contains(t, stderr, "service hosts must be tagged nodes")
+}
+
+func TestServeServiceHostTCPForwarding(t *testing.T) {
+	IntegrationSkip(t)
+
+	scenario, serviceHost, clientNode := newServiceHostPair(
+		t,
+		"serve-service-host-tcp-forwarding",
+		nil,
+		[]tsic.Option{tsic.WithPackages("python3")},
+		[]tsic.Option{tsic.WithPackages("python3"), tsic.WithDockerWorkdir("/")},
+	)
+	_ = scenario
+
+	_, stderr, err := serviceHost.Execute([]string{
+		"sh",
+		"-c",
+		"python3 -c 'import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind((\"127.0.0.1\", 18088)); s.listen(1); conn, _ = s.accept(); data = conn.recv(1024); conn.sendall(b\"tcp:\" + data); conn.close(); s.close()' >/tmp/serve-service-tcp.log 2>&1 &",
+	})
+	require.NoError(t, err, stderr)
+
+	_, stderr, err = serviceHost.Execute([]string{
+		"tailscale", "serve", "--service=svc:tcp", "--bg", "--tcp", "10080", "tcp://127.0.0.1:18088",
+	})
+	require.NoError(t, err, stderr)
+
+	var tcpHost string
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		status, err := clientNode.Status()
+		assert.NoError(c, err)
+		if !assert.NotNil(c, status.CurrentTailnet) {
+			return
+		}
+		tcpHost = fmt.Sprintf("tcp.%s", status.CurrentTailnet.MagicDNSSuffix)
+	}, 30*time.Second, 500*time.Millisecond, "client should have current tailnet status")
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, stderr, err := clientNode.Execute([]string{
+			"python3",
+			"-c",
+			fmt.Sprintf("import socket; s=socket.create_connection((%q, 10080), timeout=5); s.sendall(b'ping'); print(s.recv(1024).decode()); s.close()", tcpHost),
+		})
+		assert.NoError(c, err, stderr)
+		assert.Contains(c, stdout, "tcp:ping")
+	}, 60*time.Second, 500*time.Millisecond, "peer should reach the served service-host TCP endpoint")
+}
+
+func TestServeServiceHostTLSTerminatedTCP(t *testing.T) {
+	IntegrationSkip(t)
+
+	scenario, serviceHost, clientNode := newServiceHostPair(
+		t,
+		"serve-service-host-tls-terminated-tcp",
+		nil,
+		[]tsic.Option{tsic.WithPackages("python3")},
+		[]tsic.Option{tsic.WithPackages("curl"), tsic.WithDockerWorkdir("/")},
+	)
+	_ = scenario
+
+	_, stderr, err := serviceHost.Execute([]string{
+		"sh",
+		"-c",
+		"mkdir -p /tmp/serve-service-tls && printf 'tls-tcp-ok\\n' >/tmp/serve-service-tls/index.html && python3 -m http.server 18089 --bind 127.0.0.1 --directory /tmp/serve-service-tls >/tmp/serve-service-tls.log 2>&1 &",
+	})
+	require.NoError(t, err, stderr)
+
+	_, stderr, err = serviceHost.Execute([]string{
+		"tailscale", "serve", "--service=svc:tls", "--bg", "--tls-terminated-tcp", "9443", "tcp://127.0.0.1:18089",
+	})
+	require.NoError(t, err, stderr)
+
+	var tlsURL string
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		status, err := clientNode.Status()
+		assert.NoError(c, err)
+		if !assert.NotNil(c, status.CurrentTailnet) {
+			return
+		}
+		tlsURL = fmt.Sprintf("https://tls.%s:9443", status.CurrentTailnet.MagicDNSSuffix)
+	}, 30*time.Second, 500*time.Millisecond, "client should have current tailnet status")
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, err := clientNode.CurlFailFast(tlsURL)
+		assert.NoError(c, err)
+		assert.Contains(c, stdout, "tls-tcp-ok")
+	}, 60*time.Second, 500*time.Millisecond, "peer should reach the served TLS-terminated TCP endpoint")
+}
+
+func TestServeServiceHostMultiPortAndReconnect(t *testing.T) {
+	IntegrationSkip(t)
+
+	scenario, serviceHost, clientNode := newServiceHostPair(
+		t,
+		"serve-service-host-multi-port-reconnect",
+		nil,
+		[]tsic.Option{tsic.WithPackages("python3")},
+		[]tsic.Option{tsic.WithPackages("python3"), tsic.WithDockerWorkdir("/")},
+	)
+
+	_, stderr, err := serviceHost.Execute([]string{
+		"sh",
+		"-c",
+		"mkdir -p /tmp/serve-service-multi && printf 'multi-http\\n' >/tmp/serve-service-multi/index.html && python3 -m http.server 18090 --bind 127.0.0.1 --directory /tmp/serve-service-multi >/tmp/serve-service-multi-http.log 2>&1 & python3 -c 'import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind((\"127.0.0.1\", 18091)); s.listen(1); conn, _ = s.accept(); data = conn.recv(1024); conn.sendall(b\"multi:\" + data); conn.close(); s.close()' >/tmp/serve-service-multi-tcp.log 2>&1 &",
+	})
+	require.NoError(t, err, stderr)
+
+	_, stderr, err = serviceHost.Execute([]string{
+		"tailscale", "serve", "--service=svc:multi", "--bg", "--http", "80", "http://127.0.0.1:18090",
+	})
+	require.NoError(t, err, stderr)
+	_, stderr, err = serviceHost.Execute([]string{
+		"tailscale", "serve", "--service=svc:multi", "--bg", "--tcp", "10081", "tcp://127.0.0.1:18091",
+	})
+	require.NoError(t, err, stderr)
+
+	var multiHost string
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		status, err := clientNode.Status()
+		assert.NoError(c, err)
+		if !assert.NotNil(c, status.CurrentTailnet) {
+			return
+		}
+		multiHost = fmt.Sprintf("multi.%s", status.CurrentTailnet.MagicDNSSuffix)
+	}, 30*time.Second, 500*time.Millisecond, "client should have current tailnet status")
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		cfg := readServeStatusWithCollect(c, serviceHost)
+		svc := cfg.Services["svc:multi"]
+		if !assert.NotNil(c, svc) {
+			return
+		}
+		httpHostPort := ipn.HostPort(net.JoinHostPort(multiHost, "80"))
+		assert.Contains(c, svc.Web, httpHostPort)
+		assert.Contains(c, svc.TCP, uint16(10081))
+	}, 30*time.Second, 500*time.Millisecond, "service should expose both HTTP and TCP ports")
+
+	httpURL := fmt.Sprintf("http://%s", multiHost)
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, err := clientNode.CurlFailFast(httpURL)
+		assert.NoError(c, err)
+		assert.Contains(c, stdout, "multi-http")
+	}, 60*time.Second, 500*time.Millisecond, "peer should reach the multi-port HTTP endpoint")
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, stderr, err := clientNode.Execute([]string{
+			"python3",
+			"-c",
+			fmt.Sprintf("import socket; s=socket.create_connection((%q, 10081), timeout=5); s.sendall(b'ping'); print(s.recv(1024).decode()); s.close()", multiHost),
+		})
+		assert.NoError(c, err, stderr)
+		assert.Contains(c, stdout, "multi:ping")
+	}, 60*time.Second, 500*time.Millisecond, "peer should reach the multi-port TCP endpoint")
+
+	require.NoError(t, serviceHost.Restart())
+	require.NoError(t, serviceHost.WaitForRunning(integrationutil.PeerSyncTimeout()))
+	require.NoError(t, scenario.WaitForTailscaleSync())
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, err := clientNode.CurlFailFast(httpURL)
+		assert.NoError(c, err)
+		assert.Contains(c, stdout, "multi-http")
+	}, 60*time.Second, 500*time.Millisecond, "service should remain reachable after service-host reconnect")
+}
+
+func TestServeServiceHostPolicyPreventsVIPLeak(t *testing.T) {
+	IntegrationSkip(t)
+
+	acl := &policyv2.Policy{
+		TagOwners: policyv2.TagOwners{
+			"tag:service": policyv2.Owners{new(policyv2.Username("user1@"))},
+		},
+		AutoApprovers: policyv2.AutoApproverPolicy{
+			Services: map[string]policyv2.AutoApprovers{
+				"svc:approved": {new(policyv2.Tag("tag:service"))},
+			},
+		},
+	}
+
+	scenario, serviceHost, clientNode := newServiceHostPair(
+		t,
+		"serve-service-host-policy-no-vip-leak",
+		[]hsic.Option{hsic.WithACLPolicy(acl)},
+		[]tsic.Option{tsic.WithPackages("python3")},
+		[]tsic.Option{tsic.WithPackages("curl"), tsic.WithDockerWorkdir("/")},
+	)
+	_ = scenario
+
+	_, stderr, err := serviceHost.Execute([]string{
+		"sh",
+		"-c",
+		"mkdir -p /tmp/serve-service-approved /tmp/serve-service-denied && printf 'approved\\n' >/tmp/serve-service-approved/index.html && printf 'denied\\n' >/tmp/serve-service-denied/index.html && python3 -m http.server 18092 --bind 127.0.0.1 --directory /tmp/serve-service-approved >/tmp/serve-service-approved.log 2>&1 & python3 -m http.server 18093 --bind 127.0.0.1 --directory /tmp/serve-service-denied >/tmp/serve-service-denied.log 2>&1 &",
+	})
+	require.NoError(t, err, stderr)
+
+	_, stderr, err = serviceHost.Execute([]string{
+		"tailscale", "serve", "--service=svc:approved", "--bg", "--http", "80", "http://127.0.0.1:18092",
+	})
+	require.NoError(t, err, stderr)
+	_, stderr, err = serviceHost.Execute([]string{
+		"tailscale", "serve", "--service=svc:denied", "--bg", "--http", "80", "http://127.0.0.1:18093",
+	})
+	require.NoError(t, err, stderr)
+
+	var approvedURL, deniedURL string
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		status, err := clientNode.Status()
+		assert.NoError(c, err)
+		if !assert.NotNil(c, status.CurrentTailnet) {
+			return
+		}
+		approvedURL = fmt.Sprintf("http://approved.%s", status.CurrentTailnet.MagicDNSSuffix)
+		deniedURL = fmt.Sprintf("http://denied.%s", status.CurrentTailnet.MagicDNSSuffix)
+	}, 30*time.Second, 500*time.Millisecond, "client should have current tailnet status")
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, err := clientNode.CurlFailFast(approvedURL)
+		assert.NoError(c, err)
+		assert.Contains(c, stdout, "approved")
+	}, 60*time.Second, 500*time.Millisecond, "approved service should be reachable")
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		_, err := clientNode.CurlFailFast(deniedURL)
+		assert.Error(c, err)
+	}, 60*time.Second, 500*time.Millisecond, "unapproved service should not leak VIP reachability")
+}
+
+func newServiceHostPair(
+	t *testing.T,
+	testName string,
+	headscaleOpts []hsic.Option,
+	serviceHostOpts []tsic.Option,
+	clientNodeOpts []tsic.Option,
+) (*Scenario, TailscaleClient, TailscaleClient) {
+	t.Helper()
+
+	spec := ScenarioSpec{
+		NodesPerUser: 0,
+		Users:        []string{"user1"},
+		MaxWait:      dockertestMaxWait(),
+	}
+
+	scenario, err := NewScenario(spec)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		scenario.ShutdownAssertNoPanics(t)
+	})
+
+	opts := append(
+		[]hsic.Option{
+			hsic.WithTestName(testName),
+			hsic.WithConfigEnv(map[string]string{
+				"HEADSCALE_SERVE_SERVICE_COLLECT": "true",
+			}),
+		},
+		headscaleOpts...,
+	)
+	err = scenario.CreateHeadscaleEnv([]tsic.Option{}, opts...)
+	requireNoErrHeadscaleEnv(t, err)
+
+	headscale, err := scenario.Headscale()
+	require.NoError(t, err)
+
+	user, err := GetUserByName(headscale, "user1")
+	require.NoError(t, err)
+
+	serviceHostAuthKey, err := scenario.CreatePreAuthKeyWithTags(user.GetId(), true, false, []string{"tag:service"})
+	require.NoError(t, err)
+	clientAuthKey, err := scenario.CreatePreAuthKey(user.GetId(), true, false)
+	require.NoError(t, err)
+
+	serviceHost, err := scenario.CreateTailscaleNode(
+		"head",
+		append([]tsic.Option{
+			tsic.WithNetwork(scenario.networks[scenario.testDefaultNetwork]),
+			tsic.WithNetfilter("off"),
+		}, serviceHostOpts...)...,
+	)
+	require.NoError(t, err)
+
+	clientNode, err := scenario.CreateTailscaleNode(
+		"head",
+		append([]tsic.Option{
+			tsic.WithNetwork(scenario.networks[scenario.testDefaultNetwork]),
+			tsic.WithNetfilter("off"),
+			tsic.WithAcceptRoutes(),
+		}, clientNodeOpts...)...,
+	)
+	require.NoError(t, err)
+
+	err = serviceHost.Login(headscale.GetEndpoint(), serviceHostAuthKey.GetKey())
+	require.NoError(t, err)
+	err = clientNode.Login(headscale.GetEndpoint(), clientAuthKey.GetKey())
+	require.NoError(t, err)
+	err = serviceHost.WaitForRunning(integrationutil.PeerSyncTimeout())
+	require.NoError(t, err)
+	err = clientNode.WaitForRunning(integrationutil.PeerSyncTimeout())
+	require.NoError(t, err)
+	err = scenario.WaitForTailscaleSync()
+	require.NoError(t, err)
+
+	return scenario, serviceHost, clientNode
 }
 
 func newServeTestEnv(

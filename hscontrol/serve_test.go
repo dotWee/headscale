@@ -452,3 +452,71 @@ func TestRFC2136DNSManagerRcodeError(t *testing.T) {
 	assert.Contains(t, err.Error(), "_acme-challenge.node.example.com.")
 	assert.Contains(t, err.Error(), "REFUSED")
 }
+
+func TestRFC2136DNSManagerRefreshesChallengeValue(t *testing.T) {
+	t.Parallel()
+
+	updates := make(chan *dns.Msg, 2)
+	handler := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		updates <- r.Copy()
+		resp := new(dns.Msg)
+		resp.SetReply(r)
+		require.NoError(t, w.WriteMsg(resp))
+	})
+
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer pc.Close()
+
+	srv := &dns.Server{
+		PacketConn: pc,
+		Handler:    handler,
+		MsgAcceptFunc: func(dns.Header) dns.MsgAcceptAction {
+			return dns.MsgAccept
+		},
+	}
+	go func() {
+		_ = srv.ActivateAndServe()
+	}()
+	t.Cleanup(func() { _ = srv.Shutdown() })
+
+	manager := &rfc2136DNSManager{
+		nameserver: pc.LocalAddr().String(),
+		zone:       "example.com.",
+		ttl:        120,
+		network:    "udp",
+		timeout: timeouts{
+			request: time.Second,
+		},
+	}
+
+	require.NoError(t, manager.SetDNS(context.Background(), "_acme-challenge.node.example.com", "token-old"))
+	require.NoError(t, manager.SetDNS(context.Background(), "_acme-challenge.node.example.com", "token-new"))
+
+	var msgs []*dns.Msg
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		for len(msgs) < 2 {
+			select {
+			case msg := <-updates:
+				msgs = append(msgs, msg)
+			default:
+				return
+			}
+		}
+	}, 3*time.Second, 50*time.Millisecond, "expect two DNS updates for refresh")
+
+	require.Len(t, msgs, 2)
+	for i, msg := range msgs {
+		require.Len(t, msg.Ns, 2, "update %d should contain remove+insert", i)
+		remove, ok := msg.Ns[0].(*dns.TXT)
+		require.True(t, ok)
+		assert.Equal(t, "_acme-challenge.node.example.com.", remove.Hdr.Name)
+		insert, ok := msg.Ns[1].(*dns.TXT)
+		require.True(t, ok)
+		assert.Equal(t, "_acme-challenge.node.example.com.", insert.Hdr.Name)
+	}
+
+	secondInsert, ok := msgs[1].Ns[1].(*dns.TXT)
+	require.True(t, ok)
+	assert.Equal(t, []string{"token-new"}, secondInsert.Txt)
+}
