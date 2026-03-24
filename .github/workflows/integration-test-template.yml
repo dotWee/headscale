@@ -105,6 +105,9 @@ jobs:
           HEADSCALE_INTEGRATION_POSTGRES_IMAGE: ${{ inputs.postgres_flag == '--postgres=1' && format('postgres:{0}', github.sha) || '' }}
           HEADSCALE_INTEGRATION_GO_CACHE: /tmp/go-cache/go
           HEADSCALE_INTEGRATION_GO_BUILD_CACHE: /tmp/go-cache/.cache/go-build
+          HEADSCALE_INTEGRATION_PEBBLE_E2E: ${{ inputs.test == 'TestServeHTTPSE2EPebble' && '1' || '' }}
+          HEADSCALE_INTEGRATION_PEBBLE_DNS_NAMESERVER: ${{ secrets.HEADSCALE_PEBBLE_DNS_NAMESERVER }}
+          HEADSCALE_INTEGRATION_PEBBLE_DNS_ZONE: ${{ secrets.HEADSCALE_PEBBLE_DNS_ZONE }}
         run: /tmp/artifacts/hi run --stats --ts-memory-limit=300 --hs-memory-limit=1500 "^${{ inputs.test }}$" \
           --timeout=120m \
           ${{ inputs.postgres_flag }}

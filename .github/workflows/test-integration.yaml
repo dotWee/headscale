@@ -1,5 +1,16 @@
 name: integration
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+    inputs:
+      run_pebble_e2e:
+        description: "Run Pebble-backed HTTPS Serve e2e job"
+        required: false
+        default: false
+        type: boolean
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
@@ -248,10 +259,15 @@ jobs:
           - TestServeHTTPProxyStatusAndReset
           - TestServeTCPPeerReachability
           - TestFunnelToggleStatus
+          - TestFunnelPolicyEnableDenyByTag
           - TestServeServiceHostPeerReachability
           - TestServeServiceHostAdvertiseAndDrain
           - TestServeServiceHostGetAndSetConfig
           - TestServeServiceHostRejectsUntaggedNode
+          - TestServeServiceHostTCPForwarding
+          - TestServeServiceHostTLSTerminatedTCP
+          - TestServeServiceHostMultiPortAndReconnect
+          - TestServeServiceHostPolicyPreventsVIPLeak
           - TestSSHOneUserToAll
           - TestSSHMultipleUsersAllToAll
           - TestSSHNoSSHConfigured
@@ -321,3 +337,14 @@ jobs:
       test: ${{ matrix.test }}
       postgres_flag: "--postgres=1"
       database_name: "postgres"
+  serve-https-pebble:
+    needs: build
+    # Opt-in job for Pebble-backed HTTPS Serve e2e.
+    # Requires external RFC2136/Pebble test infra to be available.
+    if: needs.build.outputs.files-changed == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_pebble_e2e == true))
+    uses: ./.github/workflows/integration-test-template.yml
+    secrets: inherit
+    with:
+      test: TestServeHTTPSE2EPebble
+      postgres_flag: "--postgres=0"
+      database_name: "sqlite"

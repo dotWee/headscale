@@ -82,7 +82,12 @@ func TestServeHTTPSE2EPebble(t *testing.T) {
 	IntegrationSkip(t)
 
 	if os.Getenv("HEADSCALE_INTEGRATION_PEBBLE_E2E") == "" {
-		t.Skip("set HEADSCALE_INTEGRATION_PEBBLE_E2E=1 to run Pebble-backed HTTPS serve e2e")
+		t.Skip("set HEADSCALE_INTEGRATION_PEBBLE_E2E=1 with RFC2136/ACME test infra to run Pebble-backed HTTPS serve e2e")
+	}
+	nameserver := os.Getenv("HEADSCALE_INTEGRATION_PEBBLE_DNS_NAMESERVER")
+	zone := os.Getenv("HEADSCALE_INTEGRATION_PEBBLE_DNS_ZONE")
+	if nameserver == "" || zone == "" {
+		t.Skip("set HEADSCALE_INTEGRATION_PEBBLE_DNS_NAMESERVER and HEADSCALE_INTEGRATION_PEBBLE_DNS_ZONE for Pebble-backed HTTPS serve e2e")
 	}
 
 	env := newServeTestEnv(
@@ -93,8 +98,8 @@ func TestServeHTTPSE2EPebble(t *testing.T) {
 				"HEADSCALE_DNS_OVERRIDE_LOCAL_DNS":             "false",
 				"HEADSCALE_SERVE_HTTPS_ENABLED":                "true",
 				"HEADSCALE_SERVE_HTTPS_DNS_PROVIDER":           "rfc2136",
-				"HEADSCALE_SERVE_HTTPS_DNS_RFC2136_NAMESERVER": "127.0.0.1:53",
-				"HEADSCALE_SERVE_HTTPS_DNS_RFC2136_ZONE":       "headscale.net",
+				"HEADSCALE_SERVE_HTTPS_DNS_RFC2136_NAMESERVER": nameserver,
+				"HEADSCALE_SERVE_HTTPS_DNS_RFC2136_ZONE":       zone,
 			}),
 		},
 		[]tsic.Option{
