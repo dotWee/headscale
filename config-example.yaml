@@ -256,13 +256,15 @@ serve:
     dns:
       # Supported providers: rfc2136, webhook
       provider: ""
+      # ACME TXT record TTL in seconds. Must be greater than zero.
       ttl: 120
+      # Provider request timeout. Must be greater than zero.
       timeout: 5s
 
       rfc2136:
-        # Authoritative DNS server for dynamic updates.
+        # Authoritative DNS server for dynamic updates (host[:port], port defaults to 53).
         nameserver: ""
-        # DNS zone to update, without the _acme-challenge prefix.
+        # Authoritative DNS zone to update, without the _acme-challenge prefix.
         zone: example.com
         # udp or tcp
         network: udp
@@ -272,7 +274,7 @@ serve:
         tsig_algorithm: hmac-sha256.
 
       webhook:
-        # HTTP endpoint that accepts ACME DNS-01 update requests as JSON.
+        # Absolute http(s) endpoint that accepts ACME DNS-01 update requests as JSON.
         url: ""
         # Optional bearer token used as Authorization header.
         bearer_token: ""

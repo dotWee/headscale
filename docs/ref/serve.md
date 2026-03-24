@@ -117,7 +117,7 @@ Headscale's integration coverage currently exercises:
 
 Other node-scoped Serve combinations may work because configuration remains client-local, but they are not yet covered by Headscale's integration suite.
 
-The CI integration matrix runs the private Serve and service-host coverage by default. Pebble-backed HTTPS e2e is wired as a scheduled/manual CI job and requires dedicated RFC2136/ACME test infrastructure plus `HEADSCALE_PEBBLE_DNS_NAMESERVER` and `HEADSCALE_PEBBLE_DNS_ZONE` CI secrets.
+The CI integration matrix runs the private Serve and service-host coverage by default. Pebble-backed HTTPS e2e is wired as a scheduled/manual CI job and requires dedicated RFC2136/ACME test infrastructure plus `HEADSCALE_PEBBLE_DNS_NAMESERVER` and `HEADSCALE_PEBBLE_DNS_ZONE` CI secrets. That job now reports explicit `TESTED` vs `NOT TESTED` status and fails when Pebble e2e is required but preflight requirements are missing.
 
 ## Funnel Capability And Policy
 
@@ -263,9 +263,10 @@ serve:
 Current requirements:
 
 - `serve.domain` defaults to `dns.base_domain` when empty, but it may be a separate delegated zone
+- `serve.https.dns.ttl` and `serve.https.dns.timeout` must be greater than zero
 - the Serve zone must be publicly delegated
-- if using RFC2136, the zone must allow dynamic updates and TSIG should be configured when required
-- if using webhook, the configured endpoint must accept JSON payloads for TXT challenge updates
+- if using RFC2136, `serve.https.dns.rfc2136.nameserver` must be a valid `host[:port]` (port defaults to 53), the zone must be an authoritative zone (not an `_acme-challenge` label), and dynamic updates/TSIG must be configured when required
+- if using webhook, `serve.https.dns.webhook.url` must be an absolute `http://` or `https://` URL that accepts JSON payloads for TXT challenge updates
 
 See [Configuration](configuration.md), [DNS](dns.md), and [TLS](tls.md) for related settings.
 
@@ -273,6 +274,7 @@ See [Configuration](configuration.md), [DNS](dns.md), and [TLS](tls.md) for rela
 
 - HTTPS support is for private tailnet Serve. Certificate issuance still depends on public DNS because ACME DNS-01 is used.
 - Headscale only updates the ACME challenge TXT record. It does not manage the rest of your authoritative DNS zone.
+- DNS provider failures are normalized in server logs with retryability hints (`retryable=true|false`) to simplify operational triage.
 - Serve availability is still subject to ACLs. Headscale enabling Serve does not bypass policy.
 - Funnel enablement in Headscale currently means capability and port-policy advertisement to clients. It is not yet a claim of full public-ingress parity with Tailscale's managed control plane.
 - Service-hosting still requires additional control-plane support for full parity, especially the broader control-plane semantics around service workflows.
