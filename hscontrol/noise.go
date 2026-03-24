@@ -290,12 +290,18 @@ func (ns *noiseServer) QueryFeatureHandler(
 		httpError(writer, NewHTTPError(http.StatusForbidden, "node key does not match noise session", errInvalidServeDNSNode))
 		return
 	}
-	if _, ok := ns.headscale.state.GetNodeByNodeKey(featureReq.NodeKey); !ok {
+	node, ok := ns.headscale.state.GetNodeByNodeKey(featureReq.NodeKey)
+	if !ok {
 		httpError(writer, NewHTTPError(http.StatusNotFound, "node not found", errServeNodeUnavailable))
 		return
 	}
 
-	resp, err := serveFeatureResponse(ns.headscale.cfg, featureReq.Feature)
+	// Keep feature/query in sync with map capability gating for the same node.
+	resp, err := serveFeatureResponse(
+		ns.headscale.cfg,
+		featureReq.Feature,
+		ns.headscale.state.NodeCanUseFunnel(node),
+	)
 	if err != nil {
 		httpError(writer, NewHTTPError(http.StatusBadRequest, "unsupported feature", err))
 		return

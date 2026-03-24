@@ -81,6 +81,28 @@ func TestUpdateServiceCollectionFromHostinfoMarksRefresh(t *testing.T) {
 	require.Nil(t, st.ServiceIPMappings(1))
 }
 
+func TestEnsureServiceCollectionStateBootstrapsRefreshFromNodeHostinfo(t *testing.T) {
+	t.Parallel()
+
+	st := newServeServiceTestStateForNode(t, &types.Node{
+		ID:        1,
+		Hostname:  "service-node",
+		GivenName: "service-node",
+		Tags:      []string{"tag:service"},
+		Hostinfo: &tailcfg.Hostinfo{
+			ServicesHash: "hash-bootstrap",
+		},
+	})
+
+	_ = st.ensureServiceCollectionState()
+	require.True(t, st.ServiceMetadataNeedsRefresh(1))
+
+	st.serviceCollection.mu.RLock()
+	defer st.serviceCollection.mu.RUnlock()
+	require.Equal(t, "hash-bootstrap", st.serviceCollection.nodes[1].servicesHash)
+	require.True(t, st.serviceCollection.nodes[1].needsRefresh)
+}
+
 func TestSetVIPServicesAllocatesMappings(t *testing.T) {
 	t.Parallel()
 

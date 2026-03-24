@@ -109,13 +109,26 @@ func newServeTestApp(t *testing.T) (*Headscale, *httptest.Server) {
 }
 
 func registerServeTestNode(t *testing.T, app *Headscale, serverURL, hostname string) types.NodeView {
+	return registerServeTestNodeWithTags(t, app, serverURL, hostname, nil)
+}
+
+func registerServeTestNodeWithTags(
+	t *testing.T,
+	app *Headscale,
+	serverURL, hostname string,
+	tags []string,
+) types.NodeView {
 	t.Helper()
 
-	user, _, err := app.state.CreateUser(types.User{Name: "serve-user"})
-	require.NoError(t, err)
+	user, err := app.state.GetUserByName("serve-user")
+	if err != nil {
+		createdUser, _, createErr := app.state.CreateUser(types.User{Name: "serve-user"})
+		require.NoError(t, createErr)
+		user = createdUser
+	}
 
 	uid := types.UserID(user.ID)
-	pak, err := app.state.CreatePreAuthKey(&uid, true, false, nil, nil)
+	pak, err := app.state.CreatePreAuthKey(&uid, true, false, nil, tags)
 	require.NoError(t, err)
 
 	bus := eventbus.New()
@@ -172,25 +185,30 @@ func TestServeFeatureResponse(t *testing.T) {
 
 	cfg := &types.Config{}
 
-	resp, err := serveFeatureResponse(cfg, serveFeatureName)
+	resp, err := serveFeatureResponse(cfg, serveFeatureName, true)
 	require.NoError(t, err)
 	assert.False(t, resp.Complete)
 
 	cfg.Serve.HTTPS.Enabled = true
-	resp, err = serveFeatureResponse(cfg, serveFeatureName)
+	resp, err = serveFeatureResponse(cfg, serveFeatureName, true)
 	require.NoError(t, err)
 	assert.True(t, resp.Complete)
 
-	resp, err = serveFeatureResponse(cfg, funnelFeatureName)
+	resp, err = serveFeatureResponse(cfg, funnelFeatureName, true)
 	require.NoError(t, err)
 	assert.False(t, resp.Complete)
 	assert.Contains(t, resp.Text, "disabled")
 
 	cfg.Serve.Funnel.Enabled = true
 	cfg.Serve.Funnel.AllowPorts = []string{"443", "8443"}
-	resp, err = serveFeatureResponse(cfg, funnelFeatureName)
+	resp, err = serveFeatureResponse(cfg, funnelFeatureName, true)
 	require.NoError(t, err)
 	assert.True(t, resp.Complete)
+
+	resp, err = serveFeatureResponse(cfg, funnelFeatureName, false)
+	require.NoError(t, err)
+	assert.False(t, resp.Complete)
+	assert.Contains(t, resp.Text, "disabled for this node by policy")
 }
 
 func TestValidateServeDNSRequest(t *testing.T) {
@@ -282,6 +300,88 @@ func TestQueryFeatureHandler(t *testing.T) {
 	var resp tailcfg.QueryFeatureResponse
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
 	assert.True(t, resp.Complete)
+}
+
+func TestQueryFeatureHandlerFunnelMatchesMapCapabilities(t *testing.T) {
+	t.Parallel()
+
+	app, ts := newServeTestApp(t)
+	app.cfg.Serve.Funnel.Enabled = true
+	app.cfg.Serve.Funnel.AllowPorts = []string{"443"}
+
+	changed, err := app.state.SetPolicy([]byte(`{
+		"tagOwners": {
+			"tag:funnel": ["serve-user@"]
+		},
+		"nodeAttrs": [
+			{
+				"target": ["tag:funnel"],
+				"attr": ["funnel"]
+			}
+		]
+	}`))
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	allowedNode := registerServeTestNodeWithTags(
+		t,
+		app,
+		ts.URL,
+		"serve-allow",
+		[]string{"tag:funnel"},
+	)
+	deniedNode := registerServeTestNode(t, app, ts.URL, "serve-deny")
+
+	check := func(node types.NodeView, wantFunnel bool) {
+		t.Helper()
+
+		ns := &noiseServer{
+			headscale: app,
+			nodeKey:   node.NodeKey(),
+		}
+		body, err := json.Marshal(&tailcfg.QueryFeatureRequest{
+			Feature: funnelFeatureName,
+			NodeKey: node.NodeKey(),
+		})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/machine/feature/query",
+			bytes.NewReader(body),
+		)
+		rec := httptest.NewRecorder()
+		ns.QueryFeatureHandler(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var resp tailcfg.QueryFeatureResponse
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+		assert.Equal(t, wantFunnel, resp.Complete)
+
+		nodeFromState, ok := app.state.GetNodeByNodeKey(node.NodeKey())
+		require.True(t, ok)
+		tailNode, err := nodeFromState.TailNode(
+			tailcfg.CurrentCapabilityVersion,
+			func(types.NodeID) []netip.Prefix { return nil },
+			nil,
+			func(id types.NodeID) bool {
+				n, ok := app.state.GetNodeByID(id)
+				if !ok || !n.Valid() {
+					return false
+				}
+
+				return app.state.NodeCanUseFunnel(n)
+			},
+			app.cfg,
+		)
+		require.NoError(t, err)
+
+		_, hasFunnelCap := tailNode.CapMap[tailcfg.NodeAttrFunnel]
+		assert.Equal(t, wantFunnel, hasFunnelCap)
+	}
+
+	check(allowedNode, true)
+	check(deniedNode, false)
 }
 
 func TestSetDNSHandler(t *testing.T) {

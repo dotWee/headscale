@@ -35,11 +35,30 @@ func (s *State) ensureServiceCollectionState() *serviceCollectionState {
 		return s.serviceCollection
 	}
 
-	s.serviceCollection = &serviceCollectionState{
+	st := &serviceCollectionState{
 		nodes:         make(map[types.NodeID]nodeVIPServiceState),
 		serviceIPs:    make(map[tailcfg.ServiceName][]netip.Addr),
 		serviceOwners: make(map[tailcfg.ServiceName]map[types.NodeID]struct{}),
 	}
+
+	// Rehydrate refresh intent from node Hostinfo after control-plane restarts.
+	// VIP mappings remain ephemeral, but nodes advertising ServicesHash can be
+	// refreshed via C2N without waiting for a Hostinfo delta.
+	for _, node := range s.ListNodes().All() {
+		if !node.Valid() {
+			continue
+		}
+		servicesHash, _ := serviceSignals(node.Hostinfo().AsStruct())
+		if servicesHash == "" {
+			continue
+		}
+		st.nodes[node.ID()] = nodeVIPServiceState{
+			servicesHash: servicesHash,
+			needsRefresh: true,
+		}
+	}
+
+	s.serviceCollection = st
 
 	return s.serviceCollection
 }

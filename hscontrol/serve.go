@@ -135,7 +135,11 @@ func (m *rfc2136DNSManager) SetDNS(ctx context.Context, name, value string) erro
 	return nil
 }
 
-func serveFeatureResponse(cfg *types.Config, feature string) (*tailcfg.QueryFeatureResponse, error) {
+func serveFeatureResponse(
+	cfg *types.Config,
+	feature string,
+	funnelAllowed bool,
+) (*tailcfg.QueryFeatureResponse, error) {
 	switch feature {
 	case serveFeatureName:
 		if cfg.Serve.HTTPS.Enabled {
@@ -146,8 +150,13 @@ func serveFeatureResponse(cfg *types.Config, feature string) (*tailcfg.QueryFeat
 			Text: "Tailscale Serve HTTPS is disabled on this Headscale server. An administrator must enable serve.https and configure DNS challenge support.",
 		}, nil
 	case funnelFeatureName:
-		if cfg.Serve.Funnel.Enabled {
+		if cfg.Serve.Funnel.Enabled && funnelAllowed {
 			return &tailcfg.QueryFeatureResponse{Complete: true}, nil
+		}
+		if cfg.Serve.Funnel.Enabled && !funnelAllowed {
+			return &tailcfg.QueryFeatureResponse{
+				Text: "Tailscale Funnel is disabled for this node by policy. An administrator must allow funnel usage for this node (for example via nodeAttrs).",
+			}, nil
 		}
 
 		return &tailcfg.QueryFeatureResponse{
