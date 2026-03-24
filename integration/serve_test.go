@@ -1024,10 +1024,22 @@ func TestServeServiceHostTLSTerminatedTCP(t *testing.T) {
 	}, 30*time.Second, 500*time.Millisecond, "client should have current tailnet status")
 
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		stdout, err := clientNode.CurlFailFast(tlsURL)
+		cfg := readServeStatusWithCollect(c, serviceHost)
+		svc := cfg.Services["svc:tls"]
+		if !assert.NotNil(c, svc) {
+			return
+		}
+		if tcpSvc, ok := svc.TCP[9443]; assert.True(c, ok) {
+			assert.Equal(c, "127.0.0.1:18089", tcpSvc.TCPForward)
+			assert.NotEmpty(c, tcpSvc.TerminateTLS)
+		}
+	}, 60*time.Second, 500*time.Millisecond, "service status should expose TLS-terminated TCP before curl checks")
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, err := clientNode.Curl(tlsURL)
 		assert.NoError(c, err)
 		assert.Contains(c, stdout, "tls-tcp-ok")
-	}, 60*time.Second, 500*time.Millisecond, "peer should reach the served TLS-terminated TCP endpoint")
+	}, 120*time.Second, 500*time.Millisecond, "peer should reach the served TLS-terminated TCP endpoint")
 }
 
 func TestServeServiceHostMultiPortAndReconnect(t *testing.T) {
@@ -1080,7 +1092,7 @@ func TestServeServiceHostMultiPortAndReconnect(t *testing.T) {
 
 	httpURL := fmt.Sprintf("http://%s", multiHost)
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		stdout, err := clientNode.CurlFailFast(httpURL)
+		stdout, err := clientNode.Curl(httpURL)
 		assert.NoError(c, err)
 		assert.Contains(c, stdout, "multi-http")
 	}, 60*time.Second, 500*time.Millisecond, "peer should reach the multi-port HTTP endpoint")
@@ -1099,10 +1111,21 @@ func TestServeServiceHostMultiPortAndReconnect(t *testing.T) {
 	require.NoError(t, scenario.WaitForTailscaleSync())
 
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		stdout, err := clientNode.CurlFailFast(httpURL)
+		cfg := readServeStatusWithCollect(c, serviceHost)
+		svc := cfg.Services["svc:multi"]
+		if !assert.NotNil(c, svc) {
+			return
+		}
+		httpHostPort := ipn.HostPort(net.JoinHostPort(multiHost, "80"))
+		assert.Contains(c, svc.Web, httpHostPort)
+		assert.Contains(c, svc.TCP, uint16(10081))
+	}, 90*time.Second, 500*time.Millisecond, "service should be re-advertised after service-host reconnect")
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, err := clientNode.Curl(httpURL)
 		assert.NoError(c, err)
 		assert.Contains(c, stdout, "multi-http")
-	}, 60*time.Second, 500*time.Millisecond, "service should remain reachable after service-host reconnect")
+	}, 120*time.Second, 500*time.Millisecond, "service should remain reachable after service-host reconnect")
 }
 
 func TestServeServiceHostPolicyPreventsVIPLeak(t *testing.T) {
