@@ -77,7 +77,7 @@ Headscale provides the server-side primitives that current Tailscale clients exp
 
 - Node capability advertisement for Serve HTTPS
 - Per-node certificate domains in the netmap DNS configuration
-- `POST /machine/feature/query` for Serve/Funnel capability checks
+- `POST /machine/feature/query` for Serve/Funnel capability checks (policy-aware for Funnel per requesting node)
 - `POST /machine/set-dns` for ACME DNS-01 TXT record updates
 - `POST /machine/c2n/{token}` for node-targeted Serve-related C2N responses
 - Funnel node capabilities and allowed-port advertisement via node `CapMap`
@@ -104,8 +104,17 @@ Headscale's integration coverage currently exercises:
 - `tailscale serve status`
 - `tailscale serve reset`
 - TCP forwarding with `tailscale serve --tcp`
+- Funnel enable/disable status handling
+- Funnel allow/deny behavior via `nodeAttrs`
+- service-host HTTP reachability and lifecycle operations (`advertise`/`drain`)
+- service-host config round-trip (`get-config`/`set-config`)
+- service-host TCP forwarding and TLS-terminated TCP
+- service-host multi-port behavior and reconnect
+- service-host VIP leak prevention with `autoApprovers.services`
 
 Other node-scoped Serve combinations may work because configuration remains client-local, but they are not yet covered by Headscale's integration suite.
+
+The CI integration matrix runs the private Serve and service-host coverage by default. Pebble-backed HTTPS e2e is wired as a scheduled/manual CI job and requires dedicated RFC2136/ACME test infrastructure plus `HEADSCALE_PEBBLE_DNS_NAMESERVER` and `HEADSCALE_PEBBLE_DNS_ZONE` CI secrets.
 
 ## Funnel Capability And Policy
 
@@ -115,8 +124,21 @@ This is intentionally narrower than full Funnel product parity:
 
 - Headscale can tell clients that Funnel is allowed
 - Headscale can restrict Funnel to a configured set of ports
+- Headscale can allow/deny Funnel per node using ACL `nodeAttrs`
 - current clients can toggle Funnel locally when the requested port is allowed
 - Headscale does not yet implement the broader managed-control-plane behavior needed for full public-ingress parity
+
+### Public Funnel ingress boundary
+
+Headscale currently implements Funnel control-plane signaling, not the full hosted public-ingress product.
+
+In practical terms:
+
+- client-side Funnel capability and policy checks are supported
+- Headscale does not provide a built-in managed public ingress edge
+- end-to-end public ingress behavior remains out of scope until dedicated ingress infrastructure is added
+
+See `docs/ref/funnel-ingress-design.md` for the current design direction.
 
 Configuration example:
 
@@ -244,6 +266,7 @@ See [Configuration](configuration.md), [DNS](dns.md), and [TLS](tls.md) for rela
 - Serve availability is still subject to ACLs. Headscale enabling Serve does not bypass policy.
 - Funnel enablement in Headscale currently means capability and port-policy advertisement to clients. It is not yet a claim of full public-ingress parity with Tailscale's managed control plane.
 - Service-hosting still requires additional control-plane support for full parity, especially the broader control-plane semantics around service workflows.
+- Pebble-backed HTTPS e2e coverage is available as an opt-in CI path and requires dedicated RFC2136/ACME test infrastructure.
 
 ## Implementation notes
 

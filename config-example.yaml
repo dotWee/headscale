@@ -276,7 +276,8 @@ serve:
     #
     # This enables the client-side Funnel workflow and restricts it to the
     # configured port set. Headscale does not yet implement full public-ingress
-    # parity with the managed Tailscale control plane.
+    # parity with the managed Tailscale control plane and does not provide a
+    # built-in managed public ingress edge.
     enabled: false
     # Allowed Funnel ports. Entries may be single ports or ranges.
     allow_ports:
@@ -289,6 +290,9 @@ serve:
     # Headscale consumes these signals to track stale service metadata, fetch
     # /vip-services over C2N, and publish cached VIP service mappings back in
     # netmaps once they are known.
+    # Refresh intent is rebuilt from Hostinfo.ServicesHash after control-plane
+    # restart so service metadata can be re-fetched without waiting for a new
+    # Hostinfo delta.
     #
     # Service-host workflows are policy-gated. Use ACL policy
     # autoApprovers.services to allow publication of specific service names
