@@ -271,6 +271,7 @@ jobs:
           - TestServeServiceHostMultiPortAndReconnect
           - TestServeServiceHostPolicyPreventsVIPLeak
           - TestServeServiceHostPolicyRevocationWithdrawsVIP
+          - TestServeServiceHostPolicyGrantPublishesVIP
           - TestSSHOneUserToAll
           - TestSSHMultipleUsersAllToAll
           - TestSSHNoSSHConfigured

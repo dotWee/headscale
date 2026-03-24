@@ -114,6 +114,7 @@ Headscale's integration coverage currently exercises:
 - service-host multi-port behavior and reconnect
 - service-host VIP leak prevention with `autoApprovers.services`
 - service-host VIP withdrawal after policy revocation
+- service-host VIP publication after policy grant without local reconfiguration
 
 Other node-scoped Serve combinations may work because configuration remains client-local, but they are not yet covered by Headscale's integration suite.
 

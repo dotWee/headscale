@@ -1236,6 +1236,76 @@ func TestServeServiceHostPolicyRevocationWithdrawsVIP(t *testing.T) {
 	}, 60*time.Second, 500*time.Millisecond, "service should be withdrawn after policy revocation")
 }
 
+func TestServeServiceHostPolicyGrantPublishesVIP(t *testing.T) {
+	IntegrationSkip(t)
+
+	denyACL := &policyv2.Policy{
+		TagOwners: policyv2.TagOwners{
+			"tag:service": policyv2.Owners{new(policyv2.Username("user1@"))},
+		},
+		AutoApprovers: policyv2.AutoApproverPolicy{
+			Services: map[string]policyv2.AutoApprovers{
+				"svc:other": {new(policyv2.Tag("tag:service"))},
+			},
+		},
+	}
+	scenario, serviceHost, clientNode := newServiceHostPair(
+		t,
+		"serve-service-host-policy-grant",
+		[]hsic.Option{hsic.WithACLPolicy(denyACL)},
+		[]tsic.Option{tsic.WithPackages("python3")},
+		[]tsic.Option{tsic.WithPackages("curl"), tsic.WithDockerWorkdir("/")},
+	)
+
+	_, stderr, err := serviceHost.Execute([]string{
+		"sh",
+		"-c",
+		"mkdir -p /tmp/serve-service-grant && printf 'grant-ok\\n' >/tmp/serve-service-grant/index.html && python3 -m http.server 18121 --bind 127.0.0.1 --directory /tmp/serve-service-grant >/tmp/serve-service-grant.log 2>&1 &",
+	})
+	require.NoError(t, err, stderr)
+
+	_, stderr, err = serviceHost.Execute([]string{
+		"tailscale", "serve", "--service=svc:web", "--bg", "--http", "80", "http://127.0.0.1:18121",
+	})
+	require.NoError(t, err, stderr)
+
+	var serviceURL string
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		status, err := clientNode.Status()
+		assert.NoError(c, err)
+		if !assert.NotNil(c, status.CurrentTailnet) {
+			return
+		}
+		serviceURL = fmt.Sprintf("http://web.%s", status.CurrentTailnet.MagicDNSSuffix)
+	}, 30*time.Second, 500*time.Millisecond, "client should have current tailnet status")
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		_, err := clientNode.CurlFailFast(serviceURL)
+		assert.Error(c, err)
+	}, 60*time.Second, 500*time.Millisecond, "service should remain unreachable while policy denies publication")
+
+	headscale, err := scenario.Headscale()
+	require.NoError(t, err)
+
+	allowACL := &policyv2.Policy{
+		TagOwners: policyv2.TagOwners{
+			"tag:service": policyv2.Owners{new(policyv2.Username("user1@"))},
+		},
+		AutoApprovers: policyv2.AutoApproverPolicy{
+			Services: map[string]policyv2.AutoApprovers{
+				"svc:web": {new(policyv2.Tag("tag:service"))},
+			},
+		},
+	}
+	require.NoError(t, headscale.SetPolicy(allowACL))
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, err := clientNode.CurlFailFast(serviceURL)
+		assert.NoError(c, err)
+		assert.Contains(c, stdout, "grant-ok")
+	}, 60*time.Second, 500*time.Millisecond, "service should become reachable after policy grant without reconfiguration")
+}
+
 func newServiceHostPair(
 	t *testing.T,
 	testName string,
