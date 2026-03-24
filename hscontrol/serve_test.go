@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -241,6 +242,70 @@ func TestValidateServeDNSRequest(t *testing.T) {
 
 	req.Name = "_acme-challenge.other.example.com"
 	require.ErrorIs(t, validateServeDNSRequest(cfg, node.View(), node.NodeKey, req), errInvalidServeDNSName)
+}
+
+func TestValidateServeDNSRequestRejectsInvalidInputs(t *testing.T) {
+	t.Parallel()
+
+	user := &types.User{Name: "test"}
+	node := &types.Node{
+		ID:        1,
+		Hostname:  "serve-node",
+		GivenName: "serve-node",
+		UserID:    &user.ID,
+		User:      user,
+		NodeKey:   key.NewNode().Public(),
+	}
+	cfg := &types.Config{
+		BaseDomain: "example.com",
+		Serve: types.ServeConfig{
+			HTTPS: types.ServeHTTPSConfig{Enabled: true},
+		},
+	}
+
+	tests := []struct {
+		name string
+		req  tailcfg.SetDNSRequest
+		err  error
+	}{
+		{
+			name: "node key mismatch",
+			req: tailcfg.SetDNSRequest{
+				NodeKey: key.NewNode().Public(),
+				Name:    "_acme-challenge.serve-node.example.com",
+				Type:    "TXT",
+				Value:   "challenge",
+			},
+			err: errInvalidServeDNSNode,
+		},
+		{
+			name: "wrong type",
+			req: tailcfg.SetDNSRequest{
+				NodeKey: node.NodeKey,
+				Name:    "_acme-challenge.serve-node.example.com",
+				Type:    "A",
+				Value:   "challenge",
+			},
+			err: errInvalidServeDNSType,
+		},
+		{
+			name: "empty value",
+			req: tailcfg.SetDNSRequest{
+				NodeKey: node.NodeKey,
+				Name:    "_acme-challenge.serve-node.example.com",
+				Type:    "TXT",
+				Value:   "  ",
+			},
+			err: errInvalidServeDNSValue,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateServeDNSRequest(cfg, node.View(), node.NodeKey, tt.req)
+			require.ErrorIs(t, err, tt.err)
+		})
+	}
 }
 
 func TestValidateServeDNSRequestDedicatedServeDomain(t *testing.T) {
@@ -551,6 +616,54 @@ func TestRFC2136DNSManagerRcodeError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "_acme-challenge.node.example.com.")
 	assert.Contains(t, err.Error(), "REFUSED")
+
+	var providerErr *serveDNSProviderError
+	require.True(t, errors.As(err, &providerErr))
+	assert.False(t, providerErr.retryable)
+}
+
+func TestRFC2136DNSManagerRcodeRetryable(t *testing.T) {
+	t.Parallel()
+
+	handler := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		resp := new(dns.Msg)
+		resp.SetReply(r)
+		resp.Rcode = dns.RcodeServerFailure
+		require.NoError(t, w.WriteMsg(resp))
+	})
+
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer pc.Close()
+
+	srv := &dns.Server{
+		PacketConn: pc,
+		Handler:    handler,
+		MsgAcceptFunc: func(dns.Header) dns.MsgAcceptAction {
+			return dns.MsgAccept
+		},
+	}
+	go func() {
+		_ = srv.ActivateAndServe()
+	}()
+	t.Cleanup(func() { _ = srv.Shutdown() })
+
+	manager := &rfc2136DNSManager{
+		nameserver: pc.LocalAddr().String(),
+		zone:       "example.com.",
+		ttl:        120,
+		network:    "udp",
+		timeout: timeouts{
+			request: time.Second,
+		},
+	}
+
+	err = manager.SetDNS(context.Background(), "_acme-challenge.node.example.com", "token")
+	require.Error(t, err)
+
+	var providerErr *serveDNSProviderError
+	require.True(t, errors.As(err, &providerErr))
+	assert.True(t, providerErr.retryable)
 }
 
 func TestRFC2136DNSManagerRefreshesChallengeValue(t *testing.T) {
@@ -680,5 +793,32 @@ func TestWebhookDNSManagerStatusError(t *testing.T) {
 
 	err := manager.SetDNS(context.Background(), "_acme-challenge.node.example.com", "token")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "status 502")
+	assert.Contains(t, err.Error(), "status=502")
+
+	var providerErr *serveDNSProviderError
+	require.True(t, errors.As(err, &providerErr))
+	assert.True(t, providerErr.retryable)
+}
+
+func TestWebhookDNSManagerUnauthorizedErrorIsNotRetryable(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	manager := &webhookDNSManager{
+		url: server.URL,
+		timeout: timeouts{
+			request: time.Second,
+		},
+	}
+
+	err := manager.SetDNS(context.Background(), "_acme-challenge.node.example.com", "token")
+	require.Error(t, err)
+
+	var providerErr *serveDNSProviderError
+	require.True(t, errors.As(err, &providerErr))
+	assert.False(t, providerErr.retryable)
 }

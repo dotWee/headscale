@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/netip"
 	"net/url"
 	"os"
@@ -578,15 +579,30 @@ func validateServerConfig() error {
 			errorText += "Fatal config error: serve.https.enabled requires serve.domain or dns.base_domain to be set\n"
 		}
 
-		switch provider := viper.GetString("serve.https.dns.provider"); provider {
+		if ttl := viper.GetUint32("serve.https.dns.ttl"); ttl == 0 {
+			errorText += "Fatal config error: serve.https.dns.ttl must be greater than zero\n"
+		}
+		if timeout := viper.GetDuration("serve.https.dns.timeout"); timeout <= 0 {
+			errorText += "Fatal config error: serve.https.dns.timeout must be greater than zero\n"
+		}
+
+		switch provider := strings.ToLower(strings.TrimSpace(viper.GetString("serve.https.dns.provider"))); provider {
 		case "rfc2136":
-			if viper.GetString("serve.https.dns.rfc2136.nameserver") == "" {
+			nameserver := strings.TrimSpace(viper.GetString("serve.https.dns.rfc2136.nameserver"))
+			if nameserver == "" {
 				errorText += "Fatal config error: serve.https.dns.rfc2136.nameserver must be set when using the RFC2136 provider\n"
+			} else if err := validateRFC2136NameserverForValidation(nameserver); err != nil {
+				errorText += fmt.Sprintf("Fatal config error: serve.https.dns.rfc2136.nameserver must be a valid host[:port], got %q\n", nameserver)
 			}
-			if viper.GetString("serve.https.dns.rfc2136.zone") == "" {
+
+			zone := strings.TrimSpace(viper.GetString("serve.https.dns.rfc2136.zone"))
+			if zone == "" {
 				errorText += "Fatal config error: serve.https.dns.rfc2136.zone must be set when using the RFC2136 provider\n"
+			} else if strings.HasPrefix(strings.ToLower(zone), "_acme-challenge.") {
+				errorText += "Fatal config error: serve.https.dns.rfc2136.zone must be the authoritative zone, not an _acme-challenge label\n"
 			}
-			switch network := viper.GetString("serve.https.dns.rfc2136.network"); network {
+
+			switch network := strings.ToLower(strings.TrimSpace(viper.GetString("serve.https.dns.rfc2136.network"))); network {
 			case "", "udp", "tcp":
 			default:
 				errorText += fmt.Sprintf("Fatal config error: serve.https.dns.rfc2136.network must be either udp or tcp, got %q\n", network)
@@ -599,6 +615,11 @@ func validateServerConfig() error {
 			}
 			if _, err := url.ParseRequestURI(webhookURL); err != nil {
 				errorText += fmt.Sprintf("Fatal config error: serve.https.dns.webhook.url must be a valid URL, got %q\n", webhookURL)
+				break
+			}
+			parsedURL, err := url.Parse(webhookURL)
+			if err != nil || parsedURL.Hostname() == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+				errorText += fmt.Sprintf("Fatal config error: serve.https.dns.webhook.url must be an absolute http(s) URL, got %q\n", webhookURL)
 			}
 		case "":
 			errorText += "Fatal config error: serve.https.dns.provider must be set when serve.https.enabled is true\n"
@@ -638,6 +659,37 @@ func validateServerConfig() error {
 	if errorText != "" {
 		// nolint
 		return errors.New(strings.TrimSuffix(errorText, "\n"))
+	}
+
+	return nil
+}
+
+func validateRFC2136NameserverForValidation(nameserver string) error {
+	nameserver = strings.TrimSpace(nameserver)
+	if nameserver == "" {
+		return errors.New("empty nameserver")
+	}
+
+	if host, port, err := net.SplitHostPort(nameserver); err == nil {
+		if host == "" || port == "" {
+			return errors.New("missing host or port")
+		}
+
+		p, err := strconv.ParseUint(port, 10, 16)
+		if err != nil || p == 0 {
+			return errors.New("invalid port")
+		}
+
+		return nil
+	}
+
+	// Host-only values are valid and default to port 53 at runtime.
+	if ip := net.ParseIP(nameserver); ip != nil {
+		return nil
+	}
+	if strings.Contains(nameserver, ":") {
+		// Contains a colon but is neither a valid IP literal nor host:port.
+		return errors.New("invalid host:port")
 	}
 
 	return nil

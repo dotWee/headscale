@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -36,6 +37,27 @@ var (
 
 type serveDNSManager interface {
 	SetDNS(ctx context.Context, name, value string) error
+}
+
+type serveDNSProviderError struct {
+	provider  string
+	target    string
+	retryable bool
+	err       error
+}
+
+func (e *serveDNSProviderError) Error() string {
+	return fmt.Sprintf(
+		"updating ACME DNS challenge with %s provider for %q failed (retryable=%t): %v",
+		e.provider,
+		e.target,
+		e.retryable,
+		e.err,
+	)
+}
+
+func (e *serveDNSProviderError) Unwrap() error {
+	return e.err
 }
 
 type rfc2136DNSManager struct {
@@ -140,13 +162,28 @@ func (m *rfc2136DNSManager) SetDNS(ctx context.Context, name, value string) erro
 
 	resp, _, err := client.ExchangeContext(ctx, msg, m.nameserver)
 	if err != nil {
-		return fmt.Errorf("sending RFC2136 update for %q via %q: %w", fqdn, m.nameserver, err)
+		return wrapServeDNSProviderError(
+			"rfc2136",
+			fqdn,
+			isRetryableDNSError(err),
+			fmt.Errorf("sending RFC2136 update via %q: %w", m.nameserver, err),
+		)
 	}
 	if resp == nil {
-		return fmt.Errorf("sending RFC2136 update for %q via %q: empty response", fqdn, m.nameserver)
+		return wrapServeDNSProviderError(
+			"rfc2136",
+			fqdn,
+			true,
+			fmt.Errorf("sending RFC2136 update via %q: empty response", m.nameserver),
+		)
 	}
 	if resp.Rcode != dns.RcodeSuccess {
-		return fmt.Errorf("sending RFC2136 update for %q via %q: %s", fqdn, m.nameserver, dns.RcodeToString[resp.Rcode])
+		return wrapServeDNSProviderError(
+			"rfc2136",
+			fqdn,
+			isRetryableDNSRCode(resp.Rcode),
+			fmt.Errorf("sending RFC2136 update via %q: rcode=%s", m.nameserver, dns.RcodeToString[resp.Rcode]),
+		)
 	}
 
 	return nil
@@ -179,20 +216,72 @@ func (m *webhookDNSManager) SetDNS(ctx context.Context, name, value string) erro
 	client := &http.Client{Timeout: m.timeout.request}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("sending webhook DNS update for %q via %q: %w", name, m.url, err)
+		return wrapServeDNSProviderError(
+			"webhook",
+			name,
+			isRetryableDNSError(err),
+			fmt.Errorf("sending webhook DNS update via %q: %w", m.url, err),
+		)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf(
-			"sending webhook DNS update for %q via %q: status %d",
+		bodyPreview, readErr := io.ReadAll(io.LimitReader(resp.Body, 256))
+		if readErr != nil {
+			bodyPreview = nil
+		}
+
+		return wrapServeDNSProviderError(
+			"webhook",
 			name,
-			m.url,
-			resp.StatusCode,
+			isRetryableHTTPStatus(resp.StatusCode),
+			fmt.Errorf(
+				"sending webhook DNS update via %q: status=%d body=%q",
+				m.url,
+				resp.StatusCode,
+				strings.TrimSpace(string(bodyPreview)),
+			),
 		)
 	}
 
 	return nil
+}
+
+func wrapServeDNSProviderError(
+	provider, target string,
+	retryable bool,
+	err error,
+) error {
+	return &serveDNSProviderError{
+		provider:  provider,
+		target:    target,
+		retryable: retryable,
+		err:       err,
+	}
+}
+
+func isRetryableDNSError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+
+	return false
+}
+
+func isRetryableDNSRCode(rcode int) bool {
+	return rcode == dns.RcodeServerFailure
+}
+
+func isRetryableHTTPStatus(status int) bool {
+	return status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
 }
 
 func serveFeatureResponse(

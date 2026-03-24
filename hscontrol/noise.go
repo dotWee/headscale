@@ -344,6 +344,14 @@ func (ns *noiseServer) SetDNSHandler(
 	}
 
 	if err := ns.headscale.serveDNS.SetDNS(req.Context(), dnsReq.Name, dnsReq.Value); err != nil {
+		var providerErr *serveDNSProviderError
+		if errors.As(err, &providerErr) {
+			log.Warn().
+				Bool("retryable", providerErr.retryable).
+				Err(err).
+				Msg("failed to update serve ACME DNS challenge")
+		}
+
 		httpError(writer, NewHTTPError(http.StatusBadGateway, "failed to update DNS challenge record", err))
 		return
 	}

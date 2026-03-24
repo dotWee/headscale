@@ -345,6 +345,80 @@ func TestValidateServerConfigServeHTTPS(t *testing.T) {
 		assert.Contains(t, err.Error(), "serve.https.dns.webhook.url must be set")
 	})
 
+	t.Run("requires webhook http or https url", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		require.NoError(t, LoadConfig("", false))
+
+		viper.Set("server_url", "https://headscale.example.com")
+		viper.Set("noise.private_key_path", "/tmp/noise.key")
+		viper.Set("dns.base_domain", "example.com")
+		viper.Set("dns.override_local_dns", false)
+		viper.Set("serve.https.enabled", true)
+		viper.Set("serve.https.dns.provider", "webhook")
+		viper.Set("serve.https.dns.webhook.url", "ftp://dns-updater.example.com/challenge")
+
+		err := validateServerConfig()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "serve.https.dns.webhook.url must be an absolute http(s) URL")
+	})
+
+	t.Run("requires non-zero dns timeout and ttl", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		require.NoError(t, LoadConfig("", false))
+
+		viper.Set("server_url", "https://headscale.example.com")
+		viper.Set("noise.private_key_path", "/tmp/noise.key")
+		viper.Set("dns.base_domain", "example.com")
+		viper.Set("dns.override_local_dns", false)
+		viper.Set("serve.https.enabled", true)
+		viper.Set("serve.https.dns.provider", "rfc2136")
+		viper.Set("serve.https.dns.rfc2136.nameserver", "127.0.0.1:53")
+		viper.Set("serve.https.dns.rfc2136.zone", "example.com")
+		viper.Set("serve.https.dns.ttl", 0)
+		viper.Set("serve.https.dns.timeout", "0s")
+
+		err := validateServerConfig()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "serve.https.dns.ttl must be greater than zero")
+		assert.Contains(t, err.Error(), "serve.https.dns.timeout must be greater than zero")
+	})
+
+	t.Run("requires valid rfc2136 nameserver", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		require.NoError(t, LoadConfig("", false))
+
+		viper.Set("server_url", "https://headscale.example.com")
+		viper.Set("noise.private_key_path", "/tmp/noise.key")
+		viper.Set("dns.base_domain", "example.com")
+		viper.Set("dns.override_local_dns", false)
+		viper.Set("serve.https.enabled", true)
+		viper.Set("serve.https.dns.provider", "rfc2136")
+		viper.Set("serve.https.dns.rfc2136.nameserver", "127.0.0.1:not-a-port")
+		viper.Set("serve.https.dns.rfc2136.zone", "example.com")
+
+		err := validateServerConfig()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "serve.https.dns.rfc2136.nameserver must be a valid host[:port]")
+	})
+
+	t.Run("rejects rfc2136 acme-challenge zone", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		require.NoError(t, LoadConfig("", false))
+
+		viper.Set("server_url", "https://headscale.example.com")
+		viper.Set("noise.private_key_path", "/tmp/noise.key")
+		viper.Set("dns.base_domain", "example.com")
+		viper.Set("dns.override_local_dns", false)
+		viper.Set("serve.https.enabled", true)
+		viper.Set("serve.https.dns.provider", "rfc2136")
+		viper.Set("serve.https.dns.rfc2136.nameserver", "127.0.0.1:53")
+		viper.Set("serve.https.dns.rfc2136.zone", "_acme-challenge.example.com")
+
+		err := validateServerConfig()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "serve.https.dns.rfc2136.zone must be the authoritative zone")
+	})
+
 	t.Run("requires https for funnel", func(t *testing.T) {
 		t.Cleanup(viper.Reset)
 		require.NoError(t, LoadConfig("", false))
