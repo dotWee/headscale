@@ -13,6 +13,10 @@ on:
       database_name:
         required: true
         type: string
+      require_pebble_e2e:
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   test:
@@ -105,13 +109,16 @@ jobs:
           if [ -z "${HEADSCALE_PEBBLE_DNS_NAMESERVER}" ] || [ -z "${HEADSCALE_PEBBLE_DNS_ZONE}" ]; then
             echo "::notice::Skipping Pebble HTTPS E2E because HEADSCALE_PEBBLE_DNS_NAMESERVER or HEADSCALE_PEBBLE_DNS_ZONE is not configured."
             echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "reason=missing HEADSCALE_PEBBLE_DNS_NAMESERVER or HEADSCALE_PEBBLE_DNS_ZONE" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "reason=preflight checks passed" >> "$GITHUB_OUTPUT"
           fi
         env:
           HEADSCALE_PEBBLE_DNS_NAMESERVER: ${{ secrets.HEADSCALE_PEBBLE_DNS_NAMESERVER }}
           HEADSCALE_PEBBLE_DNS_ZONE: ${{ secrets.HEADSCALE_PEBBLE_DNS_ZONE }}
       - name: Run Integration Test
+        id: run_integration
         if: ${{ inputs.test != 'TestServeHTTPSE2EPebble' || steps.pebble_preflight.outputs.skip != 'true' }}
         env:
           HEADSCALE_INTEGRATION_HEADSCALE_IMAGE: headscale:${{ github.sha }}
@@ -125,6 +132,21 @@ jobs:
         run: /tmp/artifacts/hi run --stats --ts-memory-limit=300 --hs-memory-limit=1500 "^${{ inputs.test }}$" \
           --timeout=120m \
           ${{ inputs.postgres_flag }}
+      - name: Report Pebble E2E outcome
+        if: ${{ always() && inputs.test == 'TestServeHTTPSE2EPebble' }}
+        run: |
+          if [ "${{ steps.pebble_preflight.outputs.skip }}" = "true" ]; then
+            echo "Pebble HTTPS E2E: NOT TESTED (${{ steps.pebble_preflight.outputs.reason }})" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "${{ steps.run_integration.outcome }}" = "success" ]; then
+            echo "Pebble HTTPS E2E: TESTED (pass)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Pebble HTTPS E2E: TESTED (fail)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Enforce Pebble E2E execution
+        if: ${{ always() && inputs.test == 'TestServeHTTPSE2EPebble' && inputs.require_pebble_e2e && steps.pebble_preflight.outputs.skip == 'true' }}
+        run: |
+          echo "::error::Pebble HTTPS E2E was required but not executed: ${{ steps.pebble_preflight.outputs.reason }}"
+          exit 1
       # Sanitize test name for artifact upload (replace invalid characters: " : < > | * ? \ / with -)
       - name: Sanitize test name for artifacts
         if: always()
