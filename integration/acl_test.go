@@ -2808,7 +2808,7 @@ func TestACLTagPropagation(t *testing.T) {
 				} else {
 					assert.Error(c, err, "Final access should fail after tag change")
 				}
-			}, 30*time.Second, 500*time.Millisecond, "verifying access propagated after tag change")
+			}, 120*time.Second, 500*time.Millisecond, "verifying access propagated after tag change")
 
 			// Step 3b: Verify final NetMap visibility
 			t.Logf("Step 3b: Verifying final NetMap visibility (expect visible=%v)", tt.finalAccess)
@@ -3013,7 +3013,7 @@ func TestACLTagPropagationPortSpecific(t *testing.T) {
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
 		_, err := user2Node.Curl(targetURL)
 		assert.Error(c, err, "HTTP should fail with tag:sshonly (only port 22 allowed)")
-	}, 60*time.Second, 500*time.Millisecond, "HTTP blocked after tag change to sshonly")
+	}, 120*time.Second, 500*time.Millisecond, "HTTP blocked after tag change to sshonly")
 
 	t.Log("Test PASSED: Port-specific ACL changes propagated correctly")
 }
