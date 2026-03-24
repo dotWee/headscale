@@ -1248,12 +1248,13 @@ func (to TagOwners) Contains(tagOwner *Tag) error {
 type AutoApproverPolicy struct {
 	Routes   map[netip.Prefix]AutoApprovers `json:"routes,omitempty"`
 	ExitNode AutoApprovers                  `json:"exitNode,omitempty"`
+	Services map[string]AutoApprovers       `json:"services,omitempty"`
 }
 
 // MarshalJSON marshals the AutoApproverPolicy to JSON.
 func (ap AutoApproverPolicy) MarshalJSON() ([]byte, error) {
 	// Marshal empty policies as empty object
-	if ap.Routes == nil && ap.ExitNode == nil {
+	if ap.Routes == nil && ap.ExitNode == nil && ap.Services == nil {
 		return []byte("{}"), nil
 	}
 
@@ -1270,8 +1271,26 @@ func (ap AutoApproverPolicy) MarshalJSON() ([]byte, error) {
 	if obj.ExitNode == nil {
 		obj.ExitNode = AutoApprovers{}
 	}
+	if obj.Services == nil {
+		obj.Services = make(map[string]AutoApprovers)
+	}
 
 	return json.Marshal(&obj)
+}
+
+type NodeAttr struct {
+	Target Aliases  `json:"target"`
+	Attr   []string `json:"attr"`
+}
+
+func (na NodeAttr) hasAttr(name string) bool {
+	for _, attr := range na.Attr {
+		if strings.EqualFold(strings.TrimSpace(attr), name) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // resolveAutoApprovers resolves the AutoApprovers to a map of netip.Prefix to netipx.IPSet.
@@ -1338,6 +1357,65 @@ func resolveAutoApprovers(p *Policy, users types.Users, nodes views.Slice[types.
 	}
 
 	return ret, exitNodeSet, nil
+}
+
+// resolveServiceAutoApprovers resolves service auto-approvers to a map of
+// service name -> IPSet of nodes that can publish that service.
+func resolveServiceAutoApprovers(p *Policy, users types.Users, nodes views.Slice[types.NodeView]) (map[string]*netipx.IPSet, error) {
+	if p == nil {
+		return map[string]*netipx.IPSet{}, nil
+	}
+
+	ret := make(map[string]*netipx.IPSet)
+	for serviceName, autoApprovers := range p.AutoApprovers.Services {
+		var ips netipx.IPSetBuilder
+		for _, autoApprover := range autoApprovers {
+			aa, ok := autoApprover.(Alias)
+			if !ok {
+				return nil, fmt.Errorf("%w: %v", ErrAutoApproverNotAlias, autoApprover)
+			}
+
+			resolved, _ := aa.Resolve(p, users, nodes)
+			ips.AddSet(resolved)
+		}
+
+		ipSet, err := ips.IPSet()
+		if err != nil {
+			return nil, err
+		}
+		ret[serviceName] = ipSet
+	}
+
+	return ret, nil
+}
+
+// resolveFunnelNodeAttrSet resolves nodeAttrs targets that grant the "funnel"
+// attribute into one IPSet for fast per-node checks.
+func resolveFunnelNodeAttrSet(p *Policy, users types.Users, nodes views.Slice[types.NodeView]) (*netipx.IPSet, error) {
+	if p == nil || len(p.NodeAttrs) == 0 {
+		return nil, nil
+	}
+
+	var ips netipx.IPSetBuilder
+	hasFunnelRule := false
+	for _, nodeAttr := range p.NodeAttrs {
+		if !nodeAttr.hasAttr("funnel") {
+			continue
+		}
+
+		hasFunnelRule = true
+		resolved, err := nodeAttr.Target.Resolve(p, users, nodes)
+		if err != nil {
+			return nil, err
+		}
+		ips.AddSet(resolved)
+	}
+
+	if !hasFunnelRule {
+		return nil, nil
+	}
+
+	return ips.IPSet()
 }
 
 // Action represents the action to take for an ACL rule.
@@ -1648,6 +1726,7 @@ type Policy struct {
 	Groups        Groups             `json:"groups,omitempty"`
 	Hosts         Hosts              `json:"hosts,omitempty"`
 	TagOwners     TagOwners          `json:"tagOwners,omitempty"`
+	NodeAttrs     []NodeAttr         `json:"nodeAttrs,omitempty"`
 	ACLs          []ACL              `json:"acls,omitempty"`
 	AutoApprovers AutoApproverPolicy `json:"autoApprovers"`
 	SSHs          []SSH              `json:"ssh,omitempty"`
@@ -2118,6 +2197,47 @@ func (p *Policy) validate() error {
 			err := p.TagOwners.Contains(tagOwner)
 			if err != nil {
 				errs = append(errs, err)
+			}
+		}
+	}
+
+	for _, approvers := range p.AutoApprovers.Services {
+		for _, approver := range approvers {
+			switch approver := approver.(type) {
+			case *Group:
+				g := approver
+				err := p.Groups.Contains(g)
+				if err != nil {
+					errs = append(errs, err)
+				}
+			case *Tag:
+				tagOwner := approver
+				err := p.TagOwners.Contains(tagOwner)
+				if err != nil {
+					errs = append(errs, err)
+				}
+			}
+		}
+	}
+
+	for _, nodeAttr := range p.NodeAttrs {
+		for _, target := range nodeAttr.Target {
+			switch t := target.(type) {
+			case *Group:
+				err := p.Groups.Contains(t)
+				if err != nil {
+					errs = append(errs, err)
+				}
+			case *Tag:
+				err := p.TagOwners.Contains(t)
+				if err != nil {
+					errs = append(errs, err)
+				}
+			case *AutoGroup:
+				err := validateAutogroupSupported(t)
+				if err != nil {
+					errs = append(errs, err)
+				}
 			}
 		}
 	}

@@ -221,6 +221,7 @@ func TestTailNode(t *testing.T) {
 					return primary.PrimaryRoutes(id)
 				},
 				nil,
+				nil,
 				cfg,
 			)
 
@@ -278,6 +279,7 @@ func TestNodeExpiry(t *testing.T) {
 					return []netip.Prefix{}
 				},
 				nil,
+				nil,
 				&types.Config{Taildrop: types.TaildropConfig{Enabled: true}},
 			)
 			if err != nil {
@@ -320,6 +322,7 @@ func TestTailNodeServeHTTPSCapability(t *testing.T) {
 		0,
 		func(id types.NodeID) []netip.Prefix { return nil },
 		nil,
+		nil,
 		&types.Config{
 			BaseDomain: "example.com",
 			Taildrop:   types.TaildropConfig{Enabled: true},
@@ -343,6 +346,7 @@ func TestTailNodeFunnelCapabilities(t *testing.T) {
 	got, err := node.View().TailNode(
 		0,
 		func(id types.NodeID) []netip.Prefix { return nil },
+		nil,
 		nil,
 		&types.Config{
 			BaseDomain: "example.com",
@@ -382,6 +386,7 @@ func TestTailNodeServiceHostCapability(t *testing.T) {
 		0,
 		func(id types.NodeID) []netip.Prefix { return nil },
 		func(id types.NodeID) tailcfg.ServiceIPMappings { return mappings },
+		nil,
 		&types.Config{
 			BaseDomain: "example.com",
 			Taildrop:   types.TaildropConfig{Enabled: true},

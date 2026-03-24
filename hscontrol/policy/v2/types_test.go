@@ -940,6 +940,33 @@ func TestUnmarshalPolicy(t *testing.T) {
 			wantErr: `tag not defined in policy: "tag:notdefined"`,
 		},
 		{
+			name: "autoapprover-services-parse",
+			input: `
+{
+  "tagOwners": {
+    "tag:svc-hosts": ["user1@"]
+  },
+  "autoApprovers": {
+    "services": {
+      "svc:web": ["tag:svc-hosts"],
+      "svc:api": ["user1@"]
+    }
+  }
+}
+`,
+			want: &Policy{
+				TagOwners: TagOwners{
+					Tag("tag:svc-hosts"): Owners{up("user1@")},
+				},
+				AutoApprovers: AutoApproverPolicy{
+					Services: map[string]AutoApprovers{
+						"svc:web": {tp("tag:svc-hosts")},
+						"svc:api": {up("user1@")},
+					},
+				},
+			},
+		},
+		{
 			name: "missing-dst-port-is-err",
 			input: `
 			{
@@ -2730,6 +2757,134 @@ func TestResolveAutoApprovers(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResolveServiceAutoApprovers(t *testing.T) {
+	users := types.Users{
+		{Model: gorm.Model{ID: 1}, Name: "user1"},
+		{Model: gorm.Model{ID: 2}, Name: "user2"},
+	}
+
+	nodes := types.Nodes{
+		{
+			IPv4: ap("100.64.0.1"),
+			Tags: []string{"tag:svc-host"},
+			User: &users[0],
+		},
+		{
+			IPv4: ap("100.64.0.2"),
+			Tags: []string{"tag:other"},
+			User: &users[1],
+		},
+	}
+
+	pol := &Policy{
+		TagOwners: TagOwners{
+			Tag("tag:svc-host"): Owners{up("user1@")},
+			Tag("tag:other"):    Owners{up("user2@")},
+		},
+		AutoApprovers: AutoApproverPolicy{
+			Services: map[string]AutoApprovers{
+				"svc:web": {tp("tag:svc-host")},
+				"svc:api": {tp("tag:other")},
+			},
+		},
+	}
+
+	got, err := resolveServiceAutoApprovers(pol, users, nodes.ViewSlice())
+	require.NoError(t, err)
+	require.Contains(t, got, "svc:web")
+	require.Contains(t, got, "svc:api")
+	require.True(t, got["svc:web"].Contains(netip.MustParseAddr("100.64.0.1")))
+	require.False(t, got["svc:web"].Contains(netip.MustParseAddr("100.64.0.2")))
+	require.True(t, got["svc:api"].Contains(netip.MustParseAddr("100.64.0.2")))
+}
+
+func TestNodeCanApproveService(t *testing.T) {
+	users := types.Users{
+		{Model: gorm.Model{ID: 1}, Name: "user1"},
+	}
+	nodes := types.Nodes{
+		{
+			IPv4: ap("100.64.0.1"),
+			Tags: []string{"tag:svc-host"},
+			User: &users[0],
+		},
+		{
+			IPv4: ap("100.64.0.2"),
+			User: &users[0],
+		},
+	}
+
+	policyJSON := `{
+  "tagOwners": {
+    "tag:svc-host": ["user1@"]
+  },
+  "autoApprovers": {
+    "services": {
+      "svc:web": ["tag:svc-host"]
+    }
+  }
+}`
+
+	pm, err := NewPolicyManager([]byte(policyJSON), users, nodes.ViewSlice())
+	require.NoError(t, err)
+	require.True(t, pm.NodeCanApproveService(nodes[0].View(), "svc:web"))
+	require.False(t, pm.NodeCanApproveService(nodes[0].View(), "svc:api"))
+	require.False(t, pm.NodeCanApproveService(nodes[1].View(), "svc:web"))
+
+	// Backward-compatible baseline when no service policy exists: tagged nodes allowed.
+	legacyPM, err := NewPolicyManager([]byte(`{
+  "tagOwners": {
+    "tag:svc-host": ["user1@"]
+  }
+}`), users, nodes.ViewSlice())
+	require.NoError(t, err)
+	require.True(t, legacyPM.NodeCanApproveService(nodes[0].View(), "svc:any"))
+	require.False(t, legacyPM.NodeCanApproveService(nodes[1].View(), "svc:any"))
+}
+
+func TestNodeCanUseFunnel(t *testing.T) {
+	users := types.Users{
+		{Model: gorm.Model{ID: 1}, Name: "user1"},
+		{Model: gorm.Model{ID: 2}, Name: "user2"},
+	}
+	nodes := types.Nodes{
+		{
+			IPv4: ap("100.64.0.1"),
+			User: &users[0],
+		},
+		{
+			IPv4: ap("100.64.0.2"),
+			Tags: []string{"tag:web"},
+			User: &users[1],
+		},
+	}
+
+	// No nodeAttrs funnel rules: allow by default for backward compatibility.
+	legacyPM, err := NewPolicyManager([]byte(`{
+  "tagOwners": {
+    "tag:web": ["user2@"]
+  }
+}`), users, nodes.ViewSlice())
+	require.NoError(t, err)
+	require.True(t, legacyPM.NodeCanUseFunnel(nodes[0].View()))
+	require.True(t, legacyPM.NodeCanUseFunnel(nodes[1].View()))
+
+	pm, err := NewPolicyManager([]byte(`{
+  "tagOwners": {
+    "tag:web": ["user2@"]
+  },
+  "nodeAttrs": [
+    {
+      "target": ["tag:web"],
+      "attr": ["funnel"]
+    }
+  ]
+}`), users, nodes.ViewSlice())
+	require.NoError(t, err)
+	require.False(t, pm.NodeCanUseFunnel(nodes[0].View()))
+	require.True(t, pm.NodeCanUseFunnel(nodes[1].View()))
 }
 
 func TestSSHUsers_NormalUsers(t *testing.T) {

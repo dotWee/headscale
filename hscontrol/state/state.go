@@ -992,6 +992,24 @@ func (s *State) NodeCanHaveTag(node types.NodeView, tag string) bool {
 	return s.polMan.NodeCanHaveTag(node, tag)
 }
 
+// NodeCanApproveService reports whether the node can publish the given service.
+func (s *State) NodeCanApproveService(node types.NodeView, service string) bool {
+	if s.polMan == nil {
+		return node.IsTagged()
+	}
+
+	return s.polMan.NodeCanApproveService(node, service)
+}
+
+// NodeCanUseFunnel reports whether the node can use Funnel per policy.
+func (s *State) NodeCanUseFunnel(node types.NodeView) bool {
+	if s.polMan == nil {
+		return true
+	}
+
+	return s.polMan.NodeCanUseFunnel(node)
+}
+
 // SetPolicy updates the policy configuration.
 func (s *State) SetPolicy(pol []byte) (bool, error) {
 	changed, err := s.polMan.SetPolicy(pol)

@@ -81,6 +81,14 @@ func (b *MapResponseBuilder) WithSelfNode() *MapResponseBuilder {
 			return policy.ReduceRoutes(nv, b.mapper.state.GetNodePrimaryRoutes(id), matchers)
 		},
 		b.mapper.state.ServiceIPMappings,
+		func(id types.NodeID) bool {
+			node, ok := b.mapper.state.GetNodeByID(id)
+			if !ok {
+				return false
+			}
+
+			return b.mapper.state.NodeCanUseFunnel(node)
+		},
 		b.mapper.cfg)
 	if err != nil {
 		b.addError(err)
@@ -258,6 +266,14 @@ func (b *MapResponseBuilder) buildTailPeers(peers views.Slice[types.NodeView]) (
 			return policy.ReduceRoutes(node, b.mapper.state.GetNodePrimaryRoutes(id), matchers)
 		},
 		b.mapper.state.ServiceIPMappings,
+		func(id types.NodeID) bool {
+			nv, ok := b.mapper.state.GetNodeByID(id)
+			if !ok {
+				return false
+			}
+
+			return b.mapper.state.NodeCanUseFunnel(nv)
+		},
 		b.mapper.cfg)
 	if err != nil {
 		return nil, err

@@ -6,10 +6,17 @@ import (
 	"time"
 
 	hsdb "github.com/juanfont/headscale/hscontrol/db"
+	"github.com/juanfont/headscale/hscontrol/policy"
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 	"tailscale.com/tailcfg"
 )
+
+func iap(addr string) *netip.Addr {
+	a := netip.MustParseAddr(addr)
+	return &a
+}
 
 func newServeServiceTestState(t *testing.T) *State {
 	t.Helper()
@@ -247,4 +254,99 @@ func TestSetVIPServicesDoesNotPublishForUntaggedNodes(t *testing.T) {
 	defer st.serviceCollection.mu.RUnlock()
 	require.Len(t, st.serviceCollection.nodes[1].services, 1)
 	require.Equal(t, tailcfg.ServiceName("svc:web"), st.serviceCollection.nodes[1].services[0].Name)
+}
+
+func TestSetVIPServicesDoesNotPublishWhenServiceNotApproved(t *testing.T) {
+	t.Parallel()
+
+	user := types.User{
+		Model: gorm.Model{
+			ID: 1,
+		},
+		Name: "user1",
+	}
+	node := &types.Node{
+		ID:        1,
+		Hostname:  "service-node",
+		GivenName: "service-node",
+		Tags:      []string{"tag:service"},
+		IPv4:      iap("100.64.0.50"),
+		User:      &user,
+	}
+	node.UserID = &user.ID
+
+	st := newServeServiceTestStateForNode(t, node)
+
+	polMan, err := policy.NewPolicyManager([]byte(`{
+  "tagOwners": {
+    "tag:service": ["user1@"]
+  },
+  "autoApprovers": {
+    "services": {
+      "svc:api": ["tag:service"]
+    }
+  }
+}`), []types.User{user}, types.Nodes{node}.ViewSlice())
+	require.NoError(t, err)
+	st.polMan = polMan
+
+	ch, err := st.SetVIPServices(1, &tailcfg.C2NVIPServicesResponse{
+		ServicesHash: "hash-1",
+		VIPServices: []*tailcfg.VIPService{
+			{Name: "svc:web", Active: true},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, types.NodeID(1), ch.OriginNode)
+	require.True(t, ch.IncludeDNS)
+	require.Nil(t, st.ServiceIPMappings(1))
+	require.Empty(t, st.ServiceDNSRecords("headscale.net"))
+}
+
+func TestSetVIPServicesPublishesWhenServiceApproved(t *testing.T) {
+	t.Parallel()
+
+	user := types.User{
+		Model: gorm.Model{
+			ID: 1,
+		},
+		Name: "user1",
+	}
+	node := &types.Node{
+		ID:        1,
+		Hostname:  "service-node",
+		GivenName: "service-node",
+		Tags:      []string{"tag:service"},
+		IPv4:      iap("100.64.0.51"),
+		User:      &user,
+	}
+	node.UserID = &user.ID
+
+	st := newServeServiceTestStateForNode(t, node)
+
+	polMan, err := policy.NewPolicyManager([]byte(`{
+  "tagOwners": {
+    "tag:service": ["user1@"]
+  },
+  "autoApprovers": {
+    "services": {
+      "svc:web": ["tag:service"]
+    }
+  }
+}`), []types.User{user}, types.Nodes{node}.ViewSlice())
+	require.NoError(t, err)
+	st.polMan = polMan
+
+	ch, err := st.SetVIPServices(1, &tailcfg.C2NVIPServicesResponse{
+		ServicesHash: "hash-1",
+		VIPServices: []*tailcfg.VIPService{
+			{Name: "svc:web", Active: true},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, types.NodeID(1), ch.OriginNode)
+	require.True(t, ch.IncludeDNS)
+	mappings := st.ServiceIPMappings(1)
+	require.Len(t, mappings, 1)
+	require.Len(t, mappings["svc:web"], 2)
 }

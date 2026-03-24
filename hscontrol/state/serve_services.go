@@ -18,6 +18,7 @@ var errServiceVIPAllocatorUnavailable = errors.New("service VIP allocator unavai
 type nodeVIPServiceState struct {
 	servicesHash string
 	services     []*tailcfg.VIPService
+	approved     map[tailcfg.ServiceName]bool
 	needsRefresh bool
 	refreshing   bool
 }
@@ -47,6 +48,15 @@ func (s *State) shouldCollectServices() bool {
 	return s.cfg != nil && s.cfg.Serve.Service.Collect
 }
 
+func (s *State) IsServiceHostApproved(id types.NodeID, serviceName tailcfg.ServiceName) bool {
+	node, ok := s.GetNodeByID(id)
+	if !ok || !node.Valid() {
+		return false
+	}
+
+	return s.NodeCanApproveService(node, string(serviceName))
+}
+
 func (s *State) ServiceIPMappings(id types.NodeID) tailcfg.ServiceIPMappings {
 	if !s.shouldCollectServices() || s.serviceCollection == nil {
 		return nil
@@ -63,6 +73,9 @@ func (s *State) ServiceIPMappings(id types.NodeID) tailcfg.ServiceIPMappings {
 	mappings := make(tailcfg.ServiceIPMappings)
 	for _, svc := range nodeState.services {
 		if svc == nil {
+			continue
+		}
+		if nodeState.approved != nil && !nodeState.approved[svc.Name] {
 			continue
 		}
 
@@ -227,7 +240,9 @@ func (s *State) SetVIPServices(
 	defer st.mu.Unlock()
 
 	node, ok := s.GetNodeByID(id)
-	serviceHostApproved := ok && node.Valid() && node.IsTagged()
+	if !ok || !node.Valid() {
+		return change.Change{}, nil
+	}
 
 	oldState, hadOldState := st.nodes[id]
 	changed, releasedIPs := st.clearNodeLocked(id)
@@ -236,6 +251,7 @@ func (s *State) SetVIPServices(
 	}
 
 	clonedServices := make([]*tailcfg.VIPService, 0, len(resp.VIPServices))
+	approvedServices := make(map[tailcfg.ServiceName]bool, len(resp.VIPServices))
 	for _, svc := range resp.VIPServices {
 		if svc == nil {
 			continue
@@ -246,7 +262,9 @@ func (s *State) SetVIPServices(
 
 		clonedServices = append(clonedServices, svc.Clone())
 
-		if !svc.Active || !serviceHostApproved {
+		isApproved := svc.Active && s.IsServiceHostApproved(id, svc.Name)
+		approvedServices[svc.Name] = isApproved
+		if !isApproved {
 			continue
 		}
 
@@ -267,6 +285,7 @@ func (s *State) SetVIPServices(
 	st.nodes[id] = nodeVIPServiceState{
 		servicesHash: resp.ServicesHash,
 		services:     clonedServices,
+		approved:     approvedServices,
 		needsRefresh: false,
 		refreshing:   false,
 	}

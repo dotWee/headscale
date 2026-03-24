@@ -42,6 +42,9 @@ type RouteFunc func(id NodeID) []netip.Prefix
 // ServiceIPMappingsFunc returns the VIP service IP mappings assigned to a node.
 type ServiceIPMappingsFunc func(id NodeID) tailcfg.ServiceIPMappings
 
+// FunnelAllowedFunc reports whether a node can use funnel capabilities.
+type FunnelAllowedFunc func(id NodeID) bool
+
 type (
 	NodeID  uint64
 	NodeIDs []NodeID
@@ -1059,12 +1062,13 @@ func TailNodes(
 	capVer tailcfg.CapabilityVersion,
 	primaryRouteFunc RouteFunc,
 	serviceIPMappingsFunc ServiceIPMappingsFunc,
+	funnelAllowedFunc FunnelAllowedFunc,
 	cfg *Config,
 ) ([]*tailcfg.Node, error) {
 	tNodes := make([]*tailcfg.Node, 0, nodes.Len())
 
 	for _, node := range nodes.All() {
-		tNode, err := node.TailNode(capVer, primaryRouteFunc, serviceIPMappingsFunc, cfg)
+		tNode, err := node.TailNode(capVer, primaryRouteFunc, serviceIPMappingsFunc, funnelAllowedFunc, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -1080,6 +1084,7 @@ func (nv NodeView) TailNode(
 	capVer tailcfg.CapabilityVersion,
 	primaryRouteFunc RouteFunc,
 	serviceIPMappingsFunc ServiceIPMappingsFunc,
+	funnelAllowedFunc FunnelAllowedFunc,
 	cfg *Config,
 ) (*tailcfg.Node, error) {
 	if !nv.Valid() {
@@ -1133,7 +1138,11 @@ func (nv NodeView) TailNode(
 	if cfg.Serve.HTTPS.Enabled {
 		capMap[tailcfg.CapabilityHTTPS] = []tailcfg.RawMessage{}
 	}
-	if cfg.Serve.Funnel.Enabled {
+	funnelAllowed := true
+	if funnelAllowedFunc != nil {
+		funnelAllowed = funnelAllowedFunc(nv.ID())
+	}
+	if cfg.Serve.Funnel.Enabled && funnelAllowed {
 		capMap[tailcfg.NodeAttrFunnel] = []tailcfg.RawMessage{}
 		funnelPortsCap, ok, err := cfg.Serve.Funnel.Capability()
 		if err != nil {

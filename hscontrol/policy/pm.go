@@ -35,6 +35,10 @@ type PolicyManager interface {
 
 	// NodeCanApproveRoute reports whether the given node can approve the given route.
 	NodeCanApproveRoute(node types.NodeView, route netip.Prefix) bool
+	// NodeCanApproveService reports whether the given node can publish a given service name.
+	NodeCanApproveService(node types.NodeView, service string) bool
+	// NodeCanUseFunnel reports whether the given node is allowed to use Funnel.
+	NodeCanUseFunnel(node types.NodeView) bool
 
 	Version() int
 	DebugString() string

@@ -42,6 +42,10 @@ type PolicyManager struct {
 	exitSet            *netipx.IPSet
 	autoApproveMapHash deephash.Sum
 	autoApproveMap     map[netip.Prefix]*netipx.IPSet
+	serviceApproveHash deephash.Sum
+	serviceApproveMap  map[string]*netipx.IPSet
+	funnelNodeSetHash  deephash.Sum
+	funnelNodeSet      *netipx.IPSet
 
 	// Lazy map of SSH policies
 	sshPolicyMap map[types.NodeID]*tailcfg.SSHPolicy
@@ -186,10 +190,42 @@ func (pm *PolicyManager) updateLocked() (bool, error) {
 	pm.exitSet = exitSet
 	pm.exitSetHash = exitSetHash
 
+	serviceMap, err := resolveServiceAutoApprovers(pm.pol, pm.users, pm.nodes)
+	if err != nil {
+		return false, fmt.Errorf("resolving service auto approvers map: %w", err)
+	}
+	serviceApproveHash := deephash.Hash(&serviceMap)
+	serviceApproveChanged := serviceApproveHash != pm.serviceApproveHash
+	if serviceApproveChanged {
+		log.Debug().
+			Str("serviceApprove.hash.old", pm.serviceApproveHash.String()[:8]).
+			Str("serviceApprove.hash.new", serviceApproveHash.String()[:8]).
+			Int("serviceApprovers.old", len(pm.serviceApproveMap)).
+			Int("serviceApprovers.new", len(serviceMap)).
+			Msg("Service auto-approvers hash changed")
+	}
+	pm.serviceApproveMap = serviceMap
+	pm.serviceApproveHash = serviceApproveHash
+
+	funnelNodeSet, err := resolveFunnelNodeAttrSet(pm.pol, pm.users, pm.nodes)
+	if err != nil {
+		return false, fmt.Errorf("resolving funnel nodeAttrs: %w", err)
+	}
+	funnelNodeSetHash := deephash.Hash(&funnelNodeSet)
+	funnelNodeSetChanged := funnelNodeSetHash != pm.funnelNodeSetHash
+	if funnelNodeSetChanged {
+		log.Debug().
+			Str("funnelNodeSet.hash.old", pm.funnelNodeSetHash.String()[:8]).
+			Str("funnelNodeSet.hash.new", funnelNodeSetHash.String()[:8]).
+			Msg("Funnel nodeAttrs hash changed")
+	}
+	pm.funnelNodeSet = funnelNodeSet
+	pm.funnelNodeSetHash = funnelNodeSetHash
+
 	// Determine if we need to send updates to nodes
 	// filterChanged now includes policy content changes (via combined hash),
 	// so it will detect changes even for autogroup:self where compiled filter is empty
-	needsUpdate := filterChanged || tagOwnerChanged || autoApproveChanged || exitSetChanged
+	needsUpdate := filterChanged || tagOwnerChanged || autoApproveChanged || exitSetChanged || serviceApproveChanged || funnelNodeSetChanged
 
 	// Only clear caches if we're actually going to send updates
 	// This prevents clearing caches when nothing changed, which would leave nodes
@@ -218,6 +254,8 @@ func (pm *PolicyManager) updateLocked() (bool, error) {
 		Bool("tagOwners.changed", tagOwnerChanged).
 		Bool("autoApprovers.changed", autoApproveChanged).
 		Bool("exitNodes.changed", exitSetChanged).
+		Bool("serviceApprovers.changed", serviceApproveChanged).
+		Bool("funnelNodeAttrs.changed", funnelNodeSetChanged).
 		Msg("Policy changes require node updates")
 
 	return true, nil
@@ -819,6 +857,49 @@ func (pm *PolicyManager) NodeCanApproveRoute(node types.NodeView, route netip.Pr
 	}
 
 	return false
+}
+
+func (pm *PolicyManager) NodeCanApproveService(node types.NodeView, service string) bool {
+	if pm == nil {
+		return false
+	}
+
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	// Baseline rule for service-hosting in headscale: node must be tagged.
+	if !node.IsTagged() {
+		return false
+	}
+
+	// If no service-specific auto-approvers are configured, tagged nodes are allowed.
+	if len(pm.serviceApproveMap) == 0 {
+		return true
+	}
+
+	approvers, ok := pm.serviceApproveMap[service]
+	if !ok || approvers == nil {
+		return false
+	}
+
+	return slices.ContainsFunc(node.IPs(), approvers.Contains)
+}
+
+func (pm *PolicyManager) NodeCanUseFunnel(node types.NodeView) bool {
+	if pm == nil {
+		return false
+	}
+
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	// Backward-compatible behavior: if no funnel nodeAttrs are configured,
+	// don't enforce policy-level targeting.
+	if pm.funnelNodeSet == nil {
+		return true
+	}
+
+	return slices.ContainsFunc(node.IPs(), pm.funnelNodeSet.Contains)
 }
 
 func (pm *PolicyManager) Version() int {
