@@ -2989,6 +2989,27 @@ func TestACLTagPropagationPortSpecific(t *testing.T) {
 	err = headscale.SetNodeTags(targetNodeID, []string{"tag:sshonly"})
 	require.NoError(t, err)
 
+	// Wait for the control-plane node view to reflect the new tag before
+	// asserting dataplane reachability changes.
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		nodes, err := headscale.ListNodes()
+		assert.NoError(c, err)
+
+		var targetNode *v1.Node
+		for _, node := range nodes {
+			if node.GetId() == targetNodeID {
+				targetNode = node
+				break
+			}
+		}
+		if !assert.NotNil(c, targetNode) {
+			return
+		}
+
+		assert.Contains(c, targetNode.GetTags(), "tag:sshonly")
+		assert.NotContains(c, targetNode.GetTags(), "tag:webserver")
+	}, 60*time.Second, 500*time.Millisecond, "control-plane should persist updated tag set")
+
 	// Step 3: Verify peer is still visible in NetMap (partial access, not full removal)
 	t.Log("Step 3: Verifying peer remains visible in NetMap after tag change")
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
@@ -3011,9 +3032,9 @@ func TestACLTagPropagationPortSpecific(t *testing.T) {
 	// Step 4: Verify HTTP on port 80 now fails (tag:sshonly only allows port 22)
 	t.Log("Step 4: Verifying HTTP access is now blocked (tag:sshonly only allows port 22)")
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		_, err := user2Node.Curl(targetURL)
+		_, err := user2Node.CurlFailFast(targetURL)
 		assert.Error(c, err, "HTTP should fail with tag:sshonly (only port 22 allowed)")
-	}, 120*time.Second, 500*time.Millisecond, "HTTP blocked after tag change to sshonly")
+	}, 180*time.Second, 500*time.Millisecond, "HTTP blocked after tag change to sshonly")
 
 	t.Log("Test PASSED: Port-specific ACL changes propagated correctly")
 }

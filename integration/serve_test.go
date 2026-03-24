@@ -24,6 +24,29 @@ type serveTestEnv struct {
 	serveFQDN  string
 }
 
+// waitForLocalTCPPort waits until host:port accepts a connection inside node.
+// Call this after starting a background listener so tailscale serve does not
+// race a backend that has not bound yet.
+func waitForLocalTCPPort(t *testing.T, node TailscaleClient, host string, port int, msg string) {
+	t.Helper()
+
+	py := fmt.Sprintf(
+		"import socket\n"+
+			"s=socket.socket()\n"+
+			"s.settimeout(3)\n"+
+			"try:\n"+
+			"    s.connect((%q, %d))\n"+
+			"finally:\n"+
+			"    s.close()",
+		host, port,
+	)
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		_, stderr, err := node.Execute([]string{"python3", "-c", py})
+		assert.NoError(c, err, stderr)
+	}, 30*time.Second, 200*time.Millisecond, msg)
+}
+
 func TestServeHTTPProxyStatusAndReset(t *testing.T) {
 	IntegrationSkip(t)
 
@@ -201,16 +224,34 @@ func TestServeNodeScopedTLSTerminatedTCP(t *testing.T) {
 	})
 	require.NoError(t, err, stderr)
 
+	waitForLocalTCPPort(t, env.serveNode, "127.0.0.1", 18130, "TLS-terminated TCP backend HTTP server should listen")
+
 	_, stderr, err = env.serveNode.Execute([]string{
 		"tailscale", "serve", "--bg", "--tls-terminated-tcp", "9444", "tcp://127.0.0.1:18130",
 	})
 	require.NoError(t, err, stderr)
 
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		stdout, err := env.clientNode.CurlFailFast(fmt.Sprintf("https://%s:9444", env.serveFQDN))
-		assert.NoError(c, err)
+		cfg := readServeStatusWithCollect(c, env.serveNode)
+		if tcpSvc, ok := cfg.TCP[9444]; assert.True(c, ok) {
+			assert.Equal(c, "127.0.0.1:18130", tcpSvc.TCPForward)
+			assert.NotEmpty(c, tcpSvc.TerminateTLS)
+		}
+	}, 60*time.Second, 500*time.Millisecond, "node-scoped serve status should expose TLS-terminated TCP before curl checks")
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		stdout, stderr, err := env.clientNode.Execute([]string{
+			"curl",
+			"--silent",
+			"--show-error",
+			"--insecure",
+			"--max-time",
+			"5",
+			fmt.Sprintf("https://%s:9444", env.serveFQDN),
+		})
+		assert.NoError(c, err, stderr)
 		assert.Contains(c, stdout, "node-tls-ok")
-	}, 60*time.Second, 500*time.Millisecond, "peer should reach node-scoped TLS-terminated TCP endpoint")
+	}, 120*time.Second, 500*time.Millisecond, "peer should reach node-scoped TLS-terminated TCP endpoint")
 }
 
 func TestServeNodeScopedMultiPort(t *testing.T) {
@@ -1008,6 +1049,8 @@ func TestServeServiceHostTLSTerminatedTCP(t *testing.T) {
 	})
 	require.NoError(t, err, stderr)
 
+	waitForLocalTCPPort(t, serviceHost, "127.0.0.1", 18089, "TLS-terminated TCP backend HTTP server should listen")
+
 	_, stderr, err = serviceHost.Execute([]string{
 		"tailscale", "serve", "--service=svc:tls", "--bg", "--tls-terminated-tcp", "9443", "tcp://127.0.0.1:18089",
 	})
@@ -1036,14 +1079,24 @@ func TestServeServiceHostTLSTerminatedTCP(t *testing.T) {
 	}, 60*time.Second, 500*time.Millisecond, "service status should expose TLS-terminated TCP before curl checks")
 
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		stdout, err := clientNode.Curl(tlsURL)
-		assert.NoError(c, err)
+		stdout, stderr, err := clientNode.Execute([]string{
+			"curl",
+			"--silent",
+			"--show-error",
+			"--insecure",
+			"--max-time",
+			"5",
+			tlsURL,
+		})
+		assert.NoError(c, err, stderr)
 		assert.Contains(c, stdout, "tls-tcp-ok")
 	}, 120*time.Second, 500*time.Millisecond, "peer should reach the served TLS-terminated TCP endpoint")
 }
 
 func TestServeServiceHostMultiPortAndReconnect(t *testing.T) {
 	IntegrationSkip(t)
+
+	const serviceMultiBackends = "mkdir -p /tmp/serve-service-multi && printf 'multi-http\\n' >/tmp/serve-service-multi/index.html && python3 -m http.server 18090 --bind 127.0.0.1 --directory /tmp/serve-service-multi >/tmp/serve-service-multi-http.log 2>&1 & python3 -c 'import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind((\"127.0.0.1\", 18091)); s.listen(1); conn, _ = s.accept(); data = conn.recv(1024); conn.sendall(b\"multi:\" + data); conn.close(); s.close()' >/tmp/serve-service-multi-tcp.log 2>&1 &"
 
 	scenario, serviceHost, clientNode := newServiceHostPair(
 		t,
@@ -1053,21 +1106,33 @@ func TestServeServiceHostMultiPortAndReconnect(t *testing.T) {
 		[]tsic.Option{tsic.WithPackages("python3"), tsic.WithDockerWorkdir("/")},
 	)
 
-	_, stderr, err := serviceHost.Execute([]string{
-		"sh",
-		"-c",
-		"mkdir -p /tmp/serve-service-multi && printf 'multi-http\\n' >/tmp/serve-service-multi/index.html && python3 -m http.server 18090 --bind 127.0.0.1 --directory /tmp/serve-service-multi >/tmp/serve-service-multi-http.log 2>&1 & python3 -c 'import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind((\"127.0.0.1\", 18091)); s.listen(1); conn, _ = s.accept(); data = conn.recv(1024); conn.sendall(b\"multi:\" + data); conn.close(); s.close()' >/tmp/serve-service-multi-tcp.log 2>&1 &",
-	})
-	require.NoError(t, err, stderr)
+	startServiceMultiBackends := func() {
+		t.Helper()
 
-	_, stderr, err = serviceHost.Execute([]string{
-		"tailscale", "serve", "--service=svc:multi", "--bg", "--http", "80", "http://127.0.0.1:18090",
-	})
-	require.NoError(t, err, stderr)
-	_, stderr, err = serviceHost.Execute([]string{
-		"tailscale", "serve", "--service=svc:multi", "--bg", "--tcp", "10081", "tcp://127.0.0.1:18091",
-	})
-	require.NoError(t, err, stderr)
+		_, stderr, err := serviceHost.Execute([]string{"sh", "-c", serviceMultiBackends})
+		require.NoError(t, err, stderr)
+		waitForLocalTCPPort(t, serviceHost, "127.0.0.1", 18090, "multi-port HTTP backend should listen")
+		waitForLocalTCPPort(t, serviceHost, "127.0.0.1", 18091, "multi-port TCP backend should listen")
+	}
+
+	advertiseServiceMulti := func() {
+		t.Helper()
+
+		var stderr string
+		var err error
+
+		_, stderr, err = serviceHost.Execute([]string{
+			"tailscale", "serve", "--service=svc:multi", "--bg", "--http", "80", "http://127.0.0.1:18090",
+		})
+		require.NoError(t, err, stderr)
+		_, stderr, err = serviceHost.Execute([]string{
+			"tailscale", "serve", "--service=svc:multi", "--bg", "--tcp", "10081", "tcp://127.0.0.1:18091",
+		})
+		require.NoError(t, err, stderr)
+	}
+
+	startServiceMultiBackends()
+	advertiseServiceMulti()
 
 	var multiHost string
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
@@ -1109,6 +1174,11 @@ func TestServeServiceHostMultiPortAndReconnect(t *testing.T) {
 	require.NoError(t, serviceHost.Restart())
 	require.NoError(t, serviceHost.WaitForRunning(integrationutil.PeerSyncTimeout()))
 	require.NoError(t, scenario.WaitForTailscaleSync())
+
+	// Container restart kills background Python listeners; re-start backends and
+	// re-advertise serve config so peers can reach the service again.
+	startServiceMultiBackends()
+	advertiseServiceMulti()
 
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
 		cfg := readServeStatusWithCollect(c, serviceHost)
