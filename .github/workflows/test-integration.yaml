@@ -248,6 +248,8 @@ jobs:
           - TestServeHTTPProxyStatusAndReset
           - TestServeTCPPeerReachability
           - TestFunnelToggleStatus
+          - TestServeServiceHostPeerReachability
+          - TestServeServiceHostAdvertiseAndDrain
           - TestSSHOneUserToAll
           - TestSSHMultipleUsersAllToAll
           - TestSSHNoSSHConfigured

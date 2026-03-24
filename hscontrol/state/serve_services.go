@@ -243,6 +243,10 @@ func (s *State) SetVIPServices(
 
 		clonedServices = append(clonedServices, svc.Clone())
 
+		if !svc.Active {
+			continue
+		}
+
 		if _, ok := st.serviceIPs[svc.Name]; !ok {
 			ips, err := s.allocateVIPServiceIPsLocked()
 			if err != nil {

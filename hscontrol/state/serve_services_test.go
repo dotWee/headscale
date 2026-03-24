@@ -169,3 +169,27 @@ func TestServiceDNSRecords(t *testing.T) {
 		{Name: "web.headscale.net", Type: "AAAA", Value: "fd7a:115c:a1e0::1"},
 	}, records)
 }
+
+func TestSetVIPServicesDoesNotPublishInactiveServices(t *testing.T) {
+	t.Parallel()
+
+	st := newServeServiceTestState(t)
+
+	ch, err := st.SetVIPServices(1, &tailcfg.C2NVIPServicesResponse{
+		ServicesHash: "hash-1",
+		VIPServices: []*tailcfg.VIPService{
+			{Name: "svc:web", Active: false},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, types.NodeID(1), ch.OriginNode)
+	require.True(t, ch.IncludeDNS)
+	require.Nil(t, st.ServiceIPMappings(1))
+	require.Empty(t, st.ServiceDNSRecords("headscale.net"))
+
+	st.serviceCollection.mu.RLock()
+	defer st.serviceCollection.mu.RUnlock()
+	require.Len(t, st.serviceCollection.nodes[1].services, 1)
+	require.Equal(t, tailcfg.ServiceName("svc:web"), st.serviceCollection.nodes[1].services[0].Name)
+	require.False(t, st.serviceCollection.nodes[1].services[0].Active)
+}
