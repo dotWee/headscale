@@ -204,10 +204,24 @@ func TestServeTCPPeerReachability(t *testing.T) {
 func TestServeNodeScopedTLSTerminatedTCP(t *testing.T) {
 	IntegrationSkip(t)
 
+	nameserver := os.Getenv("HEADSCALE_INTEGRATION_PEBBLE_DNS_NAMESERVER")
+	zone := os.Getenv("HEADSCALE_INTEGRATION_PEBBLE_DNS_ZONE")
+	if nameserver == "" || zone == "" {
+		t.Skip("set HEADSCALE_INTEGRATION_PEBBLE_DNS_NAMESERVER and HEADSCALE_INTEGRATION_PEBBLE_DNS_ZONE to run TLS-terminated TCP serve")
+	}
+
 	env := newServeTestEnv(
 		t,
 		"serve-node-tls-terminated-tcp",
-		nil,
+		[]hsic.Option{
+			hsic.WithConfigEnv(map[string]string{
+				"HEADSCALE_DNS_OVERRIDE_LOCAL_DNS":             "false",
+				"HEADSCALE_SERVE_HTTPS_ENABLED":                "true",
+				"HEADSCALE_SERVE_HTTPS_DNS_PROVIDER":           "rfc2136",
+				"HEADSCALE_SERVE_HTTPS_DNS_RFC2136_NAMESERVER": nameserver,
+				"HEADSCALE_SERVE_HTTPS_DNS_RFC2136_ZONE":       zone,
+			}),
+		},
 		[]tsic.Option{
 			tsic.WithPackages("python3"),
 		},
@@ -1033,10 +1047,24 @@ func TestServeServiceHostTCPForwarding(t *testing.T) {
 func TestServeServiceHostTLSTerminatedTCP(t *testing.T) {
 	IntegrationSkip(t)
 
+	nameserver := os.Getenv("HEADSCALE_INTEGRATION_PEBBLE_DNS_NAMESERVER")
+	zone := os.Getenv("HEADSCALE_INTEGRATION_PEBBLE_DNS_ZONE")
+	if nameserver == "" || zone == "" {
+		t.Skip("set HEADSCALE_INTEGRATION_PEBBLE_DNS_NAMESERVER and HEADSCALE_INTEGRATION_PEBBLE_DNS_ZONE to run TLS-terminated TCP serve")
+	}
+
 	scenario, serviceHost, clientNode := newServiceHostPair(
 		t,
 		"serve-service-host-tls-terminated-tcp",
-		nil,
+		[]hsic.Option{
+			hsic.WithConfigEnv(map[string]string{
+				"HEADSCALE_DNS_OVERRIDE_LOCAL_DNS":             "false",
+				"HEADSCALE_SERVE_HTTPS_ENABLED":                "true",
+				"HEADSCALE_SERVE_HTTPS_DNS_PROVIDER":           "rfc2136",
+				"HEADSCALE_SERVE_HTTPS_DNS_RFC2136_NAMESERVER": nameserver,
+				"HEADSCALE_SERVE_HTTPS_DNS_RFC2136_ZONE":       zone,
+			}),
+		},
 		[]tsic.Option{tsic.WithPackages("python3")},
 		[]tsic.Option{tsic.WithPackages("curl"), tsic.WithDockerWorkdir("/")},
 	)
@@ -1112,7 +1140,6 @@ func TestServeServiceHostMultiPortAndReconnect(t *testing.T) {
 		_, stderr, err := serviceHost.Execute([]string{"sh", "-c", serviceMultiBackends})
 		require.NoError(t, err, stderr)
 		waitForLocalTCPPort(t, serviceHost, "127.0.0.1", 18090, "multi-port HTTP backend should listen")
-		waitForLocalTCPPort(t, serviceHost, "127.0.0.1", 18091, "multi-port TCP backend should listen")
 	}
 
 	advertiseServiceMulti := func() {

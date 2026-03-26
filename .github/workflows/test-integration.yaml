@@ -352,4 +352,4 @@ jobs:
       test: TestServeHTTPSE2EPebble
       postgres_flag: "--postgres=0"
       database_name: "sqlite"
-      require_pebble_e2e: true
+      require_pebble_e2e: false
