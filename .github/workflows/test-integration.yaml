@@ -257,6 +257,7 @@ jobs:
           - TestHeadscale
           - TestTailscaleNodesJoiningHeadcale
           - TestServeHTTPProxyStatusAndReset
+          - TestServeHTTPSE2EPebble
           - TestServeTCPPeerReachability
           - TestServeNodeScopedTLSTerminatedTCP
           - TestServeNodeScopedMultiPort

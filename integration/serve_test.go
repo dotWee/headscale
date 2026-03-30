@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
+	policyv2 "github.com/juanfont/headscale/hscontrol/policy/v2"
 	"github.com/juanfont/headscale/integration/hsic"
 	"github.com/juanfont/headscale/integration/integrationutil"
 	"github.com/juanfont/headscale/integration/tsic"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	policyv2 "github.com/juanfont/headscale/hscontrol/policy/v2"
 	"tailscale.com/ipn"
 )
 
@@ -205,7 +205,9 @@ func TestServeNodeScopedTLSTerminatedTCP(t *testing.T) {
 	IntegrationSkip(t)
 
 	nameserver := os.Getenv("HEADSCALE_INTEGRATION_PEBBLE_DNS_NAMESERVER")
+
 	zone := os.Getenv("HEADSCALE_INTEGRATION_PEBBLE_DNS_ZONE")
+
 	if nameserver == "" || zone == "" {
 		t.Skip("set HEADSCALE_INTEGRATION_PEBBLE_DNS_NAMESERVER and HEADSCALE_INTEGRATION_PEBBLE_DNS_ZONE to run TLS-terminated TCP serve")
 	}
@@ -1048,7 +1050,9 @@ func TestServeServiceHostTLSTerminatedTCP(t *testing.T) {
 	IntegrationSkip(t)
 
 	nameserver := os.Getenv("HEADSCALE_INTEGRATION_PEBBLE_DNS_NAMESERVER")
+
 	zone := os.Getenv("HEADSCALE_INTEGRATION_PEBBLE_DNS_ZONE")
+
 	if nameserver == "" || zone == "" {
 		t.Skip("set HEADSCALE_INTEGRATION_PEBBLE_DNS_NAMESERVER and HEADSCALE_INTEGRATION_PEBBLE_DNS_ZONE to run TLS-terminated TCP serve")
 	}
