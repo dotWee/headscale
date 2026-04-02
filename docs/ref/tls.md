@@ -1,5 +1,10 @@
 # Running the service via TLS (optional)
 
+!!! tip "Looking for Tailscale Serve HTTPS?"
+
+    This page covers TLS for the **Headscale control server itself**. For TLS certificates on individual tailnet nodes
+    via `tailscale serve`, see [Serve and Funnel](./serve.md#https-certificate-provisioning).
+
 ## Bring your own certificate
 
 Headscale can be configured to expose its web service via TLS. To configure the certificate and key file manually, set the `tls_cert_path` and `tls_key_path` configuration parameters. If the path is relative, it will be interpreted as relative to the directory the configuration file was read from.

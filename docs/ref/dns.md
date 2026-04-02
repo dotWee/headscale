@@ -23,7 +23,10 @@ hostname and port combination "http://hostname-in-magic-dns.myvpn.example.com:30
 
 !!! warning "Limitations"
 
-    Currently, [only A and AAAA records are processed by Tailscale](https://github.com/tailscale/tailscale/blob/v1.86.5/ipn/ipnlocal/node_backend.go#L662).
+    Currently, [only A and AAAA records are processed by Tailscale](https://github.com/tailscale/tailscale/blob/v1.86.5/ipn/ipnlocal/node_backend.go#L662)
+    for MagicDNS resolution. TXT records (such as ACME challenge records used by
+    [Serve HTTPS](./serve.md#https-certificate-provisioning)) are stored by Headscale but must be resolved through
+    public DNS, not MagicDNS.
 
 1. Configure extra DNS records using one of the available configuration options:
 

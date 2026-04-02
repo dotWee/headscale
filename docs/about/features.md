@@ -33,6 +33,14 @@ provides on overview of Headscale's feature and compatibility with the Tailscale
     - [x] Basic registration
     - [x] Update user profile from identity provider
     - [ ] OIDC groups cannot be used in ACLs
-- [ ] [Funnel](https://tailscale.com/kb/1223/funnel) ([#1040](https://github.com/juanfont/headscale/issues/1040))
-- [ ] [Serve](https://tailscale.com/kb/1312/serve) ([#1234](https://github.com/juanfont/headscale/issues/1921))
+- [x] [Serve and Funnel](../ref/serve.md) ([#1921](https://github.com/juanfont/headscale/issues/1921))
+    - [x] [Serve](../ref/serve.md#serve) - expose local services to the tailnet
+        - [x] HTTP mode (`tailscale serve --http`)
+        - [x] HTTPS mode with [ACME certificate provisioning](../ref/serve.md#https-certificate-provisioning)
+        - [x] Feature query endpoint (`/machine/feature/query`)
+        - [x] ACME DNS-01 challenge endpoint (`/machine/set-dns`)
+    - [x] [Funnel](../ref/serve.md#funnel) - expose services to the public internet
+        - [x] Capability signaling (`NodeAttrFunnel`, `CapabilityFunnelPorts`)
+        - [x] Ingress authorization (`PeerCapabilityIngress`)
+        - [ ] Requires external [ingress relay infrastructure](../ref/serve.md#limitations)
 - [ ] [Network flow logs](https://tailscale.com/kb/1219/network-flow-logs) ([#1687](https://github.com/juanfont/headscale/issues/1687))

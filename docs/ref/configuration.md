@@ -10,6 +10,15 @@
     - the environment variable `HEADSCALE_CONFIG`
 - Validate the configuration file with: `headscale configtest`
 
+The configuration reference for specific features can be found on their dedicated pages:
+
+- [DNS configuration](./dns.md)
+- [Serve and Funnel](./serve.md#configuration)
+- [TLS](./tls.md)
+- [DERP](./derp.md)
+- [ACLs](./acls.md)
+- [OIDC](./oidc.md)
+
 !!! example "Get the [example configuration from the GitHub repository](https://github.com/juanfont/headscale/blob/main/config-example.yaml)"
 
     Always select the [same GitHub tag](https://github.com/juanfont/headscale/tags) as the released version you use to
