@@ -286,6 +286,10 @@ func (h *Headscale) scheduledTasks(ctx context.Context) {
 		extraRecordsUpdate = make(chan []tailcfg.DNSRecord)
 	}
 
+	// Periodically clean expired ACME challenge TXT records.
+	acmeCleanupTicker := time.NewTicker(1 * time.Minute)
+	defer acmeCleanupTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -344,6 +348,16 @@ func (h *Headscale) scheduledTasks(ctx context.Context) {
 			h.recomposeExtraRecords()
 
 			h.Change(change.ExtraRecords())
+
+		case <-acmeCleanupTicker.C:
+			if removed := h.acmeChallenges.CleanExpired(); removed > 0 {
+				log.Trace().
+					Int("removed", removed).
+					Msg("cleaned expired ACME challenge records")
+
+				h.recomposeExtraRecords()
+				h.Change(change.ExtraRecords())
+			}
 		}
 	}
 }
