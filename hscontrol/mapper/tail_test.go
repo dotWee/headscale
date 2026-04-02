@@ -245,6 +245,263 @@ func TestTailNode(t *testing.T) {
 	}
 }
 
+func TestGenerateDNSConfig_CertDomains(t *testing.T) {
+	tests := []struct {
+		name            string
+		baseDomain      string
+		serveEnabled    bool
+		nodeName        string
+		wantCertDomains []string
+	}{
+		{
+			name:            "serve-enabled-with-base-domain",
+			baseDomain:      "headscale.net",
+			serveEnabled:    true,
+			nodeName:        "mynode",
+			wantCertDomains: []string{"mynode.headscale.net"},
+		},
+		{
+			name:            "serve-disabled",
+			baseDomain:      "headscale.net",
+			serveEnabled:    false,
+			nodeName:        "mynode",
+			wantCertDomains: nil,
+		},
+		{
+			name:            "no-base-domain",
+			baseDomain:      "",
+			serveEnabled:    true,
+			nodeName:        "mynode",
+			wantCertDomains: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dnsConfig := &tailcfg.DNSConfig{
+				Proxied: true,
+			}
+
+			cfg := &types.Config{
+				BaseDomain:       tt.baseDomain,
+				TailcfgDNSConfig: dnsConfig,
+				Serve:            types.ServeConfig{Enabled: tt.serveEnabled},
+			}
+
+			node := &types.Node{
+				GivenName: tt.nodeName,
+				Hostinfo:  &tailcfg.Hostinfo{},
+			}
+
+			got := generateDNSConfig(cfg, node.View())
+			if got == nil {
+				t.Fatal("generateDNSConfig returned nil")
+			}
+
+			if diff := cmp.Diff(tt.wantCertDomains, got.CertDomains); diff != "" {
+				t.Errorf("CertDomains mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestTailNode_ServeAndFunnelCapabilities(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     *types.Config
+		wantCap map[tailcfg.NodeCapability]bool // true means must be present
+	}{
+		{
+			name: "serve-enabled-funnel-disabled",
+			cfg: &types.Config{
+				Taildrop: types.TaildropConfig{Enabled: true},
+				Serve:    types.ServeConfig{Enabled: true},
+				Funnel:   types.FunnelConfig{Enabled: false},
+			},
+			wantCap: map[tailcfg.NodeCapability]bool{
+				tailcfg.CapabilityHTTPS: true,
+				tailcfg.NodeAttrFunnel:  false,
+			},
+		},
+		{
+			name: "serve-disabled-funnel-disabled",
+			cfg: &types.Config{
+				Taildrop: types.TaildropConfig{Enabled: true},
+				Serve:    types.ServeConfig{Enabled: false},
+				Funnel:   types.FunnelConfig{Enabled: false},
+			},
+			wantCap: map[tailcfg.NodeCapability]bool{
+				tailcfg.CapabilityHTTPS: false,
+				tailcfg.NodeAttrFunnel:  false,
+			},
+		},
+		{
+			name: "serve-enabled-funnel-enabled-default-ports",
+			cfg: &types.Config{
+				Taildrop: types.TaildropConfig{Enabled: true},
+				Serve:    types.ServeConfig{Enabled: true},
+				Funnel: types.FunnelConfig{
+					Enabled: true,
+				},
+			},
+			wantCap: map[tailcfg.NodeCapability]bool{
+				tailcfg.CapabilityHTTPS: true,
+				tailcfg.NodeAttrFunnel:  true,
+				tailcfg.NodeCapability(string(tailcfg.CapabilityFunnelPorts) + "?ports=443,8443,10000"): true,
+			},
+		},
+		{
+			name: "funnel-enabled-custom-ports",
+			cfg: &types.Config{
+				Taildrop: types.TaildropConfig{Enabled: true},
+				Serve:    types.ServeConfig{Enabled: true},
+				Funnel: types.FunnelConfig{
+					Enabled:      true,
+					AllowedPorts: []uint16{443, 8080},
+				},
+			},
+			wantCap: map[tailcfg.NodeCapability]bool{
+				tailcfg.CapabilityHTTPS: true,
+				tailcfg.NodeAttrFunnel:  true,
+				tailcfg.NodeCapability(string(tailcfg.CapabilityFunnelPorts) + "?ports=443,8080"): true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			node := &types.Node{
+				GivenName: "test-node",
+				Hostinfo:  &tailcfg.Hostinfo{},
+			}
+
+			nv := node.View()
+
+			got, err := nv.TailNode(
+				0,
+				func(id types.NodeID) []netip.Prefix {
+					return nil
+				},
+				tt.cfg,
+			)
+			if err != nil {
+				t.Fatalf("TailNode() error = %v", err)
+			}
+
+			for cap, wantPresent := range tt.wantCap {
+				_, present := got.CapMap[cap]
+				if present != wantPresent {
+					if wantPresent {
+						t.Errorf(
+							"expected CapMap to contain %q, but it was absent",
+							cap,
+						)
+					} else {
+						t.Errorf(
+							"expected CapMap to NOT contain %q, but it was present",
+							cap,
+						)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestAppendIngressCapGrant(t *testing.T) {
+	iap := func(ipStr string) *netip.Addr {
+		ip := netip.MustParseAddr(ipStr)
+		return &ip
+	}
+
+	tests := []struct {
+		name        string
+		filter      []tailcfg.FilterRule
+		node        *types.Node
+		wantLen     int
+		wantIngress bool
+	}{
+		{
+			name:   "adds-ingress-to-node-with-ipv4",
+			filter: []tailcfg.FilterRule{},
+			node: &types.Node{
+				GivenName: "test",
+				IPv4:      iap("100.64.0.1"),
+				Hostinfo:  &tailcfg.Hostinfo{},
+			},
+			wantLen:     1,
+			wantIngress: true,
+		},
+		{
+			name: "appends-to-existing-rules",
+			filter: []tailcfg.FilterRule{
+				{
+					SrcIPs: []string{"*"},
+					DstPorts: []tailcfg.NetPortRange{
+						{IP: "*", Ports: tailcfg.PortRangeAny},
+					},
+				},
+			},
+			node: &types.Node{
+				GivenName: "test",
+				IPv4:      iap("100.64.0.1"),
+				Hostinfo:  &tailcfg.Hostinfo{},
+			},
+			wantLen:     2,
+			wantIngress: true,
+		},
+		{
+			name:   "no-ingress-for-node-without-ips",
+			filter: []tailcfg.FilterRule{},
+			node: &types.Node{
+				GivenName: "test",
+				Hostinfo:  &tailcfg.Hostinfo{},
+			},
+			wantLen:     0,
+			wantIngress: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nv := tt.node.View()
+			got := appendIngressCapGrant(tt.filter, nv)
+
+			if len(got) != tt.wantLen {
+				t.Fatalf(
+					"appendIngressCapGrant() returned %d rules, want %d",
+					len(got), tt.wantLen,
+				)
+			}
+
+			if !tt.wantIngress {
+				return
+			}
+
+			// Check the last rule is the ingress CapGrant.
+			lastRule := got[len(got)-1]
+			if len(lastRule.CapGrant) != 1 {
+				t.Fatalf(
+					"expected 1 CapGrant, got %d",
+					len(lastRule.CapGrant),
+				)
+			}
+
+			grant := lastRule.CapGrant[0]
+
+			// Verify ingress capability is present.
+			if _, ok := grant.CapMap[tailcfg.PeerCapabilityIngress]; !ok {
+				t.Error("expected PeerCapabilityIngress in CapMap")
+			}
+
+			// Verify Dsts contain the node's prefixes.
+			if len(grant.Dsts) == 0 {
+				t.Error("expected non-empty Dsts in CapGrant")
+			}
+		})
+	}
+}
+
 func TestNodeExpiry(t *testing.T) {
 	tp := func(t time.Time) *time.Time {
 		return &t

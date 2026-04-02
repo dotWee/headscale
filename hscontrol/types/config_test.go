@@ -472,3 +472,49 @@ func TestSafeServerURL(t *testing.T) {
 		})
 	}
 }
+
+func TestParseUint16Slice(t *testing.T) {
+	tests := []struct {
+		name string
+		vals []int
+		want []uint16
+	}{
+		{
+			name: "empty",
+			vals: []int{},
+			want: []uint16{},
+		},
+		{
+			name: "valid-ports",
+			vals: []int{443, 8443, 10000},
+			want: []uint16{443, 8443, 10000},
+		},
+		{
+			name: "skip-out-of-range",
+			vals: []int{0, -1, 443, 70000, 8443},
+			want: []uint16{443, 8443},
+		},
+		{
+			name: "max-uint16",
+			vals: []int{65535},
+			want: []uint16{65535},
+		},
+		{
+			name: "all-invalid",
+			vals: []int{0, -100, 100000},
+			want: []uint16{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseUint16Slice(tt.vals)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestDefaultFunnelPorts(t *testing.T) {
+	ports := DefaultFunnelPorts()
+	assert.Equal(t, []uint16{443, 8443, 10000}, ports)
+}
