@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -88,6 +89,11 @@ type Config struct {
 	// TailcfgDNSConfig is the tailcfg representation of the DNS configuration,
 	// it can be used directly when sending Netmaps to clients.
 	TailcfgDNSConfig *tailcfg.DNSConfig
+
+	// ExtraRecordsMu protects TailcfgDNSConfig.ExtraRecords from
+	// concurrent access. It is set by the Headscale server and used
+	// by the mapper when cloning the DNS config.
+	ExtraRecordsMu *sync.RWMutex
 
 	UnixSocket           string
 	UnixSocketPermission fs.FileMode

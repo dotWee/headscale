@@ -122,6 +122,13 @@ func generateDNSConfig(
 		return nil
 	}
 
+	// Acquire read lock to protect against concurrent writes to
+	// ExtraRecords by the file watcher and ACME handler.
+	if cfg.ExtraRecordsMu != nil {
+		cfg.ExtraRecordsMu.RLock()
+		defer cfg.ExtraRecordsMu.RUnlock()
+	}
+
 	dnsConfig := cfg.TailcfgDNSConfig.Clone()
 
 	addNextDNSMetadata(dnsConfig.Resolvers, node)

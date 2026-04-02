@@ -191,10 +191,8 @@ func (ns *noiseServer) SetDNSHandler(
 	// Store the ACME challenge record.
 	ns.headscale.acmeChallenges.SetRecord(dnsReq.Name, dnsReq.Value)
 
-	// Merge ACME challenge records into the DNS config and notify all
-	// connected clients so the records propagate via MagicDNS.
-	mergeACMERecords(ns.headscale)
-
+	// Recompose extra records and notify all connected clients.
+	ns.headscale.recomposeExtraRecords()
 	ns.headscale.Change(change.ExtraRecords())
 
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -209,27 +207,41 @@ func (ns *noiseServer) SetDNSHandler(
 	}
 }
 
-// mergeACMERecords appends any ACME challenge records into the
-// TailcfgDNSConfig.ExtraRecords slice. Existing non-ACME extra
-// records are preserved; stale ACME entries are replaced.
-func mergeACMERecords(h *Headscale) {
+// recomposeExtraRecords rebuilds TailcfgDNSConfig.ExtraRecords from
+// all sources (file-based extra records + ACME challenge records)
+// under a write lock. This ensures that the file watcher and ACME
+// handler never race on ExtraRecords, and neither can clobber the other.
+func (h *Headscale) recomposeExtraRecords() {
 	if h.cfg.TailcfgDNSConfig == nil {
 		return
 	}
 
-	acmeRecords := h.acmeChallenges.Records()
+	h.cfg.ExtraRecordsMu.Lock()
+	defer h.cfg.ExtraRecordsMu.Unlock()
 
-	// Filter out old ACME records from ExtraRecords, keep everything else.
-	existing := h.cfg.TailcfgDNSConfig.ExtraRecords
-	cleaned := make([]tailcfg.DNSRecord, 0, len(existing))
+	// Start from file-based extra records (the authoritative base).
+	var base []tailcfg.DNSRecord
+	if h.extraRecordMan != nil {
+		base = h.extraRecordMan.Records()
+	} else {
+		// No file watcher; use the static records from config.
+		// Filter out any ACME records that may have been appended
+		// in a previous recompose cycle.
+		for _, r := range h.cfg.DNSConfig.ExtraRecords {
+			if r.Type == "TXT" && strings.HasPrefix(r.Name, "_acme-challenge.") {
+				continue
+			}
 
-	for _, r := range existing {
-		if r.Type == "TXT" && strings.HasPrefix(r.Name, "_acme-challenge.") {
-			continue // drop old ACME entries; fresh ones will be appended
+			base = append(base, r)
 		}
-
-		cleaned = append(cleaned, r)
 	}
 
-	h.cfg.TailcfgDNSConfig.ExtraRecords = append(cleaned, acmeRecords...)
+	// Append ACME challenge records.
+	acmeRecords := h.acmeChallenges.Records()
+
+	combined := make([]tailcfg.DNSRecord, 0, len(base)+len(acmeRecords))
+	combined = append(combined, base...)
+	combined = append(combined, acmeRecords...)
+
+	h.cfg.TailcfgDNSConfig.ExtraRecords = combined
 }

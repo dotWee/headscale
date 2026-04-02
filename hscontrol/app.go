@@ -138,6 +138,10 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 		return nil, fmt.Errorf("init state: %w", err)
 	}
 
+	// Initialize the ExtraRecords mutex on the config so the mapper
+	// can protect reads during DNS config cloning.
+	cfg.ExtraRecordsMu = &sync.RWMutex{}
+
 	app := Headscale{
 		cfg:               cfg,
 		noisePrivateKey:   noisePrivateKey,
@@ -330,12 +334,14 @@ func (h *Headscale) scheduledTasks(ctx context.Context) {
 
 			h.Change(change.DERPMap())
 
-		case records, ok := <-extraRecordsUpdate:
+		case _, ok := <-extraRecordsUpdate:
 			if !ok {
 				continue
 			}
 
-			h.cfg.TailcfgDNSConfig.ExtraRecords = records
+			// Recompose from all sources (file watcher + ACME)
+			// under the extraRecordsMu lock to avoid races.
+			h.recomposeExtraRecords()
 
 			h.Change(change.ExtraRecords())
 		}

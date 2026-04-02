@@ -2,6 +2,7 @@ package hscontrol
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -122,25 +123,25 @@ func TestQueryFeature(t *testing.T) {
 	}
 }
 
-func TestMergeACMERecords(t *testing.T) {
+func TestRecomposeExtraRecords(t *testing.T) {
 	tests := []struct {
 		name           string
-		existing       []tailcfg.DNSRecord
+		staticRecords  []tailcfg.DNSRecord
 		acmeRecords    map[string]string
 		wantLen        int
 		wantACMECount  int
 		wantOtherCount int
 	}{
 		{
-			name:           "no-acme-records",
-			existing:       nil,
+			name:           "no-records",
+			staticRecords:  nil,
 			acmeRecords:    nil,
 			wantLen:        0,
 			wantACMECount:  0,
 			wantOtherCount: 0,
 		},
 		{
-			name: "add-acme-to-empty",
+			name: "acme-only",
 			acmeRecords: map[string]string{
 				"_acme-challenge.node1.example.com": "token-1",
 			},
@@ -149,8 +150,8 @@ func TestMergeACMERecords(t *testing.T) {
 			wantOtherCount: 0,
 		},
 		{
-			name: "preserve-non-acme-records",
-			existing: []tailcfg.DNSRecord{
+			name: "static-plus-acme",
+			staticRecords: []tailcfg.DNSRecord{
 				{Name: "myapp.example.com", Value: "100.64.0.1"},
 			},
 			acmeRecords: map[string]string{
@@ -161,8 +162,8 @@ func TestMergeACMERecords(t *testing.T) {
 			wantOtherCount: 1,
 		},
 		{
-			name: "replace-stale-acme-records",
-			existing: []tailcfg.DNSRecord{
+			name: "stale-acme-in-static-are-filtered",
+			staticRecords: []tailcfg.DNSRecord{
 				{Name: "myapp.example.com", Value: "100.64.0.1"},
 				{Name: "_acme-challenge.old.example.com", Type: "TXT", Value: "old-token"},
 			},
@@ -177,21 +178,25 @@ func TestMergeACMERecords(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			mu := &sync.RWMutex{}
 			store := dns.NewACMEChallengeStore()
+
 			for name, value := range tt.acmeRecords {
 				store.SetRecord(name, value)
 			}
 
 			h := &Headscale{
 				cfg: &types.Config{
-					TailcfgDNSConfig: &tailcfg.DNSConfig{
-						ExtraRecords: tt.existing,
+					DNSConfig: types.DNSConfig{
+						ExtraRecords: tt.staticRecords,
 					},
+					TailcfgDNSConfig: &tailcfg.DNSConfig{},
+					ExtraRecordsMu:   mu,
 				},
 				acmeChallenges: store,
 			}
 
-			mergeACMERecords(h)
+			h.recomposeExtraRecords()
 
 			records := h.cfg.TailcfgDNSConfig.ExtraRecords
 			require.Len(t, records, tt.wantLen)
@@ -214,7 +219,7 @@ func TestMergeACMERecords(t *testing.T) {
 	}
 }
 
-func TestMergeACMERecords_NilDNSConfig(t *testing.T) {
+func TestRecomposeExtraRecords_NilDNSConfig(t *testing.T) {
 	h := &Headscale{
 		cfg: &types.Config{
 			TailcfgDNSConfig: nil,
@@ -223,5 +228,5 @@ func TestMergeACMERecords_NilDNSConfig(t *testing.T) {
 	}
 
 	// Should not panic with nil DNSConfig.
-	mergeACMERecords(h)
+	h.recomposeExtraRecords()
 }
