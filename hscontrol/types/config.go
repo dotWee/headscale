@@ -1107,7 +1107,7 @@ func LoadServerConfig() (*Config, error) {
 		}
 	}
 
-	return &Config{
+	cfg := &Config{
 		ServerURL:          serverURL,
 		Addr:               viper.GetString("listen_addr"),
 		MetricsAddr:        viper.GetString("metrics_listen_addr"),
@@ -1234,7 +1234,22 @@ func LoadServerConfig() (*Config, error) {
 			NodeStoreBatchSize:      viper.GetInt("tuning.node_store_batch_size"),
 			NodeStoreBatchTimeout:   viper.GetDuration("tuning.node_store_batch_timeout"),
 		},
-	}, nil
+	}
+
+	// Validate serve/funnel configuration.
+	if cfg.Serve.Enabled && cfg.Serve.ACMEDNS.Provider == "" {
+		log.Warn().
+			Msg("serve is enabled but no ACME DNS provider is configured (serve.acme_dns.provider). " +
+				"Only HTTP mode (tailscale serve --http) will work. " +
+				"HTTPS mode requires an ACME DNS provider to provision TLS certificates.")
+	}
+
+	if cfg.Funnel.Enabled && !cfg.Serve.Enabled {
+		log.Warn().
+			Msg("funnel is enabled but serve is disabled. Funnel requires serve to be enabled.")
+	}
+
+	return cfg, nil
 }
 
 // parseUint16Slice converts a slice of int values to uint16.

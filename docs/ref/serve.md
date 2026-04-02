@@ -89,22 +89,71 @@ When using `tailscale serve` in HTTPS mode (the default), the Tailscale client p
 
 4. **The certificate is issued** and stored locally on the node.
 
-Headscale implements steps 1 and 2. The TXT records are stored in memory and injected into the DNS configuration. For
-the ACME CA to verify the challenge (step 3), the `_acme-challenge` TXT records must be resolvable via **public DNS**.
+Headscale implements all four steps. For step 2, it stores the TXT record and optionally calls a configured
+**ACME DNS provider** to create the record in public DNS so Let's Encrypt can verify it.
 
-!!! warning "Public DNS requirement for HTTPS"
+#### Configuring an ACME DNS provider
 
-    HTTPS certificate provisioning requires that the base domain's DNS is configured so that `_acme-challenge.<node>.
-    <base-domain>` TXT records are resolvable by Let's Encrypt. This works automatically when Headscale is the
-    authoritative DNS server for the base domain. In other setups, additional DNS delegation may be required.
+For HTTPS serve to work, Headscale needs a way to create `_acme-challenge` TXT records in public DNS. Configure one of
+the available providers in the [configuration file](./configuration.md):
 
-    If your deployment does not have public DNS for the base domain, use HTTP mode instead:
+=== "Command provider"
 
-    ```console
-    $ tailscale serve --bg --http=80 http://127.0.0.1:3000
+    Executes a local script to create/remove DNS records. Supports `{domain}` and `{token}` placeholders in the
+    command. Environment variables `ACME_DOMAIN` and `ACME_TOKEN` are also set.
+
+    ```yaml title="config.yaml" hl_lines="3-7"
+    serve:
+      enabled: true
+      acme_dns:
+        provider: command
+        command:
+          create: "/usr/local/bin/acme-dns-hook create {domain} {token}"
+          remove: "/usr/local/bin/acme-dns-hook remove {domain} {token}"
+          timeout: 30s
     ```
 
-    HTTP mode works without any DNS infrastructure and is fully supported.
+    Example hook scripts for common DNS providers:
+
+    - **Cloudflare**: Use [acme-dns-cloudflare](https://github.com/topics/acme-dns-cloudflare) or write a script using
+      the [Cloudflare API](https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/create/).
+    - **PowerDNS**: Use the [PowerDNS API](https://doc.powerdns.com/authoritative/http-api/zone.html) to create TXT
+      records.
+    - **AWS Route53**: Use the [AWS CLI](https://docs.aws.amazon.com/cli/latest/reference/route53/) to manage records.
+
+=== "Webhook provider"
+
+    Calls an HTTP endpoint with a JSON payload `{"domain": "...", "token": "..."}`. Custom headers can be set for
+    authentication.
+
+    ```yaml title="config.yaml" hl_lines="3-9"
+    serve:
+      enabled: true
+      acme_dns:
+        provider: webhook
+        webhook:
+          create_url: "https://dns-api.example.com/acme/create"
+          remove_url: "https://dns-api.example.com/acme/remove"
+          headers:
+            Authorization: "Bearer YOUR_API_TOKEN"
+          timeout: 30s
+    ```
+
+=== "No provider (HTTP only)"
+
+    Without a provider, only HTTP mode (`tailscale serve --http=80`) works. HTTPS mode will fail because
+    Let's Encrypt cannot verify the ACME DNS-01 challenge.
+
+    ```yaml title="config.yaml"
+    serve:
+      enabled: true
+      # No acme_dns section — HTTPS certs cannot be provisioned
+    ```
+
+!!! warning "Without an ACME DNS provider"
+
+    If no ACME DNS provider is configured, `tailscale serve 3000` (default HTTPS on port 443) will fail with a
+    certificate error. Use `tailscale serve --http=80` for HTTP mode, which works without any DNS infrastructure.
 
 !!! tip "Headscale's own TLS is separate"
 
