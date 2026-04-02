@@ -109,6 +109,10 @@ type Headscale struct {
 	// provisioning (tailscale serve HTTPS).
 	acmeChallenges *dns.ACMEChallengeStore
 
+	// acmeDNSProvider creates/removes ACME DNS-01 challenge TXT records
+	// in public DNS. Nil when no provider is configured.
+	acmeDNSProvider dns.ACMEDNSProvider
+
 	clientStreamsOpen sync.WaitGroup
 }
 
@@ -142,12 +146,18 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 	// can protect reads during DNS config cloning.
 	cfg.ExtraRecordsMu = &sync.RWMutex{}
 
+	var acmeDNSProvider dns.ACMEDNSProvider
+	if cfg.Serve.Enabled {
+		acmeDNSProvider = newACMEDNSProvider(cfg.Serve.ACMEDNS)
+	}
+
 	app := Headscale{
 		cfg:               cfg,
 		noisePrivateKey:   noisePrivateKey,
 		clientStreamsOpen: sync.WaitGroup{},
 		state:             s,
 		acmeChallenges:    dns.NewACMEChallengeStore(),
+		acmeDNSProvider:   acmeDNSProvider,
 	}
 
 	// Initialize ephemeral garbage collector
@@ -1087,6 +1097,45 @@ func readOrCreatePrivateKey(path string) (*key.MachinePrivate, error) {
 	}
 
 	return &machineKey, nil
+}
+
+// newACMEDNSProvider creates an ACMEDNSProvider from the config.
+// Returns nil if no provider is configured.
+func newACMEDNSProvider(cfg types.ACMEDNSConfig) dns.ACMEDNSProvider {
+	switch cfg.Provider {
+	case "command":
+		log.Info().
+			Str("create_cmd", cfg.Command.Create).
+			Msg("using command-based ACME DNS provider")
+
+		return dns.NewCommandDNSProvider(
+			cfg.Command.Create,
+			cfg.Command.Remove,
+			cfg.Command.Timeout,
+		)
+
+	case "webhook":
+		log.Info().
+			Str("create_url", cfg.Webhook.CreateURL).
+			Msg("using webhook-based ACME DNS provider")
+
+		return dns.NewWebhookDNSProvider(
+			cfg.Webhook.CreateURL,
+			cfg.Webhook.RemoveURL,
+			cfg.Webhook.Headers,
+			cfg.Webhook.Timeout,
+		)
+
+	case "":
+		return nil
+
+	default:
+		log.Warn().
+			Str("provider", cfg.Provider).
+			Msg("unknown ACME DNS provider, HTTPS serve will require external DNS setup")
+
+		return nil
+	}
 }
 
 // Change is used to send changes to nodes.

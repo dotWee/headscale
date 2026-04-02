@@ -1,17 +1,21 @@
 package hscontrol
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/types/change"
 	"github.com/rs/zerolog/log"
 	"tailscale.com/tailcfg"
 )
+
+const acmeDNSProviderTimeout = 30 * time.Second
 
 // QueryFeatureHandler handles /machine/feature/query requests from the
 // Tailscale client. The client sends a [tailcfg.QueryFeatureRequest] to
@@ -188,8 +192,39 @@ func (ns *noiseServer) SetDNSHandler(
 		return
 	}
 
-	// Store the ACME challenge record.
+	// Store the ACME challenge record for tracking and ExtraRecords.
 	ns.headscale.acmeChallenges.SetRecord(dnsReq.Name, dnsReq.Value)
+
+	// Create the TXT record in public DNS via the configured provider.
+	if ns.headscale.acmeDNSProvider != nil {
+		provCtx, provCancel := context.WithTimeout(
+			req.Context(),
+			acmeDNSProviderTimeout,
+		)
+		defer provCancel()
+
+		err := ns.headscale.acmeDNSProvider.CreateTXTRecord(
+			provCtx, dnsReq.Name, dnsReq.Value,
+		)
+		if err != nil {
+			log.Error().
+				Err(err).
+				Str("domain", dnsReq.Name).
+				Msg("failed to create ACME TXT record in public DNS")
+
+			httpError(writer, NewHTTPError(
+				http.StatusInternalServerError,
+				"Failed to create DNS record for ACME challenge",
+				err,
+			))
+
+			return
+		}
+	} else {
+		log.Warn().
+			Str("domain", dnsReq.Name).
+			Msg("no ACME DNS provider configured; TXT record stored locally but may not be resolvable by ACME CA")
+	}
 
 	// Recompose extra records and notify all connected clients.
 	ns.headscale.recomposeExtraRecords()

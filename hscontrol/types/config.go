@@ -231,6 +231,43 @@ type TaildropConfig struct {
 // nodes to expose local services (HTTP, HTTPS, TCP) to the tailnet.
 type ServeConfig struct {
 	Enabled bool
+	ACMEDNS ACMEDNSConfig
+}
+
+// ACMEDNSConfig configures how ACME DNS-01 challenge TXT records
+// are created in public DNS for TLS certificate provisioning.
+type ACMEDNSConfig struct {
+	// Provider selects the DNS challenge resolution method.
+	// "command" — runs a local command
+	// "webhook" — calls an HTTP endpoint
+	// "" — no provider (HTTPS serve requires external DNS setup)
+	Provider string
+
+	Command ACMEDNSCommandConfig
+	Webhook ACMEDNSWebhookConfig
+}
+
+// ACMEDNSCommandConfig configures the command-based ACME DNS provider.
+type ACMEDNSCommandConfig struct {
+	// Create is the command template to create a TXT record.
+	// Supports {domain} and {token} placeholders.
+	Create string
+	// Remove is the command template to remove a TXT record.
+	Remove string
+	// Timeout for command execution.
+	Timeout time.Duration
+}
+
+// ACMEDNSWebhookConfig configures the webhook-based ACME DNS provider.
+type ACMEDNSWebhookConfig struct {
+	// CreateURL is the URL to POST to when creating a TXT record.
+	CreateURL string `mapstructure:"create_url"`
+	// RemoveURL is the URL to POST when removing a TXT record.
+	RemoveURL string `mapstructure:"remove_url"`
+	// Headers are additional HTTP headers (e.g., for auth tokens).
+	Headers map[string]string
+	// Timeout for HTTP requests.
+	Timeout time.Duration
 }
 
 // FunnelConfig controls the Tailscale Funnel feature, which extends
@@ -425,6 +462,9 @@ func LoadConfig(path string, isFile bool) error {
 	viper.SetDefault("taildrop.enabled", true)
 
 	viper.SetDefault("serve.enabled", true)
+	viper.SetDefault("serve.acme_dns.provider", "")
+	viper.SetDefault("serve.acme_dns.command.timeout", "30s")
+	viper.SetDefault("serve.acme_dns.webhook.timeout", "30s")
 	viper.SetDefault("funnel.enabled", false)
 	viper.SetDefault("funnel.allowed_ports", []int{443, 8443, 10000})
 
@@ -1145,6 +1185,20 @@ func LoadServerConfig() (*Config, error) {
 		},
 		Serve: ServeConfig{
 			Enabled: viper.GetBool("serve.enabled"),
+			ACMEDNS: ACMEDNSConfig{
+				Provider: viper.GetString("serve.acme_dns.provider"),
+				Command: ACMEDNSCommandConfig{
+					Create:  viper.GetString("serve.acme_dns.command.create"),
+					Remove:  viper.GetString("serve.acme_dns.command.remove"),
+					Timeout: viper.GetDuration("serve.acme_dns.command.timeout"),
+				},
+				Webhook: ACMEDNSWebhookConfig{
+					CreateURL: viper.GetString("serve.acme_dns.webhook.create_url"),
+					RemoveURL: viper.GetString("serve.acme_dns.webhook.remove_url"),
+					Headers:   viper.GetStringMapString("serve.acme_dns.webhook.headers"),
+					Timeout:   viper.GetDuration("serve.acme_dns.webhook.timeout"),
+				},
+			},
 		},
 		Funnel: FunnelConfig{
 			Enabled:      viper.GetBool("funnel.enabled"),

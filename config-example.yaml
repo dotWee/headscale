@@ -443,6 +443,31 @@ serve:
   # nodes can use `tailscale serve` to expose local services.
   enabled: true
 
+  # ACME DNS-01 challenge configuration for HTTPS certificate provisioning.
+  # Required for `tailscale serve` HTTPS mode (the default).
+  # Without this, only HTTP mode (`tailscale serve --http=80`) works.
+  #
+  # acme_dns:
+  #   # Provider type: "command", "webhook", or "" (disabled).
+  #   provider: command
+  #
+  #   # Command provider: executes a local script to manage DNS records.
+  #   # Supports {domain} and {token} placeholders in the command.
+  #   # Environment variables ACME_DOMAIN and ACME_TOKEN are also set.
+  #   command:
+  #     create: "/usr/local/bin/acme-dns-hook create {domain} {token}"
+  #     remove: "/usr/local/bin/acme-dns-hook remove {domain} {token}"
+  #     timeout: 30s
+  #
+  #   # Webhook provider: calls an HTTP endpoint with JSON payload.
+  #   # Payload: {"domain": "...", "token": "..."}
+  #   webhook:
+  #     create_url: "https://dns-api.example.com/acme/create"
+  #     remove_url: "https://dns-api.example.com/acme/remove"
+  #     headers:
+  #       Authorization: "Bearer YOUR_API_TOKEN"
+  #     timeout: 30s
+
 # Funnel configuration
 # Tailscale Funnel extends Serve to expose services publicly over the internet.
 # https://tailscale.com/kb/1223/funnel/
