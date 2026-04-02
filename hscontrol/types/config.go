@@ -97,6 +97,8 @@ type Config struct {
 	LogTail             LogTailConfig
 	RandomizeClientPort bool
 	Taildrop            TaildropConfig
+	Serve               ServeConfig
+	Funnel              FunnelConfig
 
 	CLI CLIConfig
 
@@ -217,6 +219,27 @@ type LogTailConfig struct {
 
 type TaildropConfig struct {
 	Enabled bool
+}
+
+// ServeConfig controls the Tailscale Serve feature, which allows
+// nodes to expose local services (HTTP, HTTPS, TCP) to the tailnet.
+type ServeConfig struct {
+	Enabled bool
+}
+
+// FunnelConfig controls the Tailscale Funnel feature, which extends
+// Serve to expose services publicly over the internet.
+type FunnelConfig struct {
+	Enabled bool
+	// AllowedPorts specifies the TCP ports available for Funnel.
+	// Defaults to [443, 8443, 10000] if empty.
+	AllowedPorts []uint16
+}
+
+// DefaultFunnelPorts returns the default set of ports that Funnel
+// can listen on. These match the Tailscale SaaS defaults.
+func DefaultFunnelPorts() []uint16 {
+	return []uint16{443, 8443, 10000}
 }
 
 type CLIConfig struct {
@@ -394,6 +417,10 @@ func LoadConfig(path string, isFile bool) error {
 	viper.SetDefault("logtail.enabled", false)
 	viper.SetDefault("randomize_client_port", false)
 	viper.SetDefault("taildrop.enabled", true)
+
+	viper.SetDefault("serve.enabled", true)
+	viper.SetDefault("funnel.enabled", false)
+	viper.SetDefault("funnel.allowed_ports", []int{443, 8443, 10000})
 
 	viper.SetDefault("ephemeral_node_inactivity_timeout", "120s")
 
@@ -1110,6 +1137,13 @@ func LoadServerConfig() (*Config, error) {
 		Taildrop: TaildropConfig{
 			Enabled: viper.GetBool("taildrop.enabled"),
 		},
+		Serve: ServeConfig{
+			Enabled: viper.GetBool("serve.enabled"),
+		},
+		Funnel: FunnelConfig{
+			Enabled:      viper.GetBool("funnel.enabled"),
+			AllowedPorts: parseUint16Slice(viper.GetIntSlice("funnel.allowed_ports")),
+		},
 
 		Policy: policyConfig(),
 
@@ -1141,6 +1175,19 @@ func LoadServerConfig() (*Config, error) {
 			NodeStoreBatchTimeout:   viper.GetDuration("tuning.node_store_batch_timeout"),
 		},
 	}, nil
+}
+
+// parseUint16Slice converts a slice of int values to uint16.
+// Values outside the uint16 range are silently skipped.
+func parseUint16Slice(vals []int) []uint16 {
+	out := make([]uint16, 0, len(vals))
+	for _, v := range vals {
+		if v > 0 && v <= 65535 {
+			out = append(out, uint16(v)) //nolint:gosec // range checked above
+		}
+	}
+
+	return out
 }
 
 // BaseDomain cannot be a suffix of the server URL.

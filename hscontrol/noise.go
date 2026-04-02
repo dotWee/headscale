@@ -155,10 +155,10 @@ func (h *Headscale) NoiseUpgradeHandler(
 		// https://github.com/tailscale/tailscale/blob/dfba01ca9bd8c4df02c3c32f400d9aeb897c5fc7/cmd/tailscale/cli/debug.go#L1138
 		r.Get("/whoami", ns.NotImplementedHandler)
 
-		// client sends a [tailcfg.SetDNSRequest] to this endpoints and expect
-		// the server to create or update this DNS record "somewhere".
-		// It is typically a TXT record for an ACME challenge.
-		r.Post("/set-dns", ns.NotImplementedHandler)
+		// client sends a [tailcfg.SetDNSRequest] to this endpoint and expects
+		// the server to create or update a DNS record for ACME challenges.
+		// Used by tailscale serve HTTPS for TLS certificate provisioning.
+		r.Post("/set-dns", ns.SetDNSHandler)
 
 		// A patch of [tailcfg.SetDeviceAttributesRequest] to update device attributes.
 		// We currently do not support device attributes.
@@ -174,7 +174,7 @@ func (h *Headscale) NoiseUpgradeHandler(
 
 		// Asks the server if a feature is available and receive information about how to enable it.
 		// Gets a [tailcfg.QueryFeatureRequest] and returns a [tailcfg.QueryFeatureResponse].
-		r.Post("/feature/query", ns.NotImplementedHandler)
+		r.Post("/feature/query", ns.QueryFeatureHandler)
 
 		r.Post("/update-health", ns.NotImplementedHandler)
 

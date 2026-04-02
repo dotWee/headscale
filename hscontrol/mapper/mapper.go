@@ -126,6 +126,17 @@ func generateDNSConfig(
 
 	addNextDNSMetadata(dnsConfig.Resolvers, node)
 
+	// Populate CertDomains with this node's FQDN so the Tailscale client
+	// knows which domain it can provision TLS certificates for via ACME.
+	// CertDomains are FQDNs without trailing periods, per the tailcfg spec.
+	if cfg.Serve.Enabled && cfg.BaseDomain != "" {
+		fqdn, err := node.GetFQDN(cfg.BaseDomain)
+		if err == nil {
+			certDomain := strings.TrimSuffix(fqdn, ".")
+			dnsConfig.CertDomains = append(dnsConfig.CertDomains, certDomain)
+		}
+	}
+
 	return dnsConfig
 }
 

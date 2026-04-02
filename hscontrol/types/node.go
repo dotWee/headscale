@@ -1150,6 +1150,37 @@ func (nv NodeView) TailNode(
 	capMap[tailcfg.NodeAttrsTaildriveShare] = []tailcfg.RawMessage{}
 	capMap[tailcfg.NodeAttrsTaildriveAccess] = []tailcfg.RawMessage{}
 
+	// Enable HTTPS capability when Serve is enabled.
+	// This tells the client it can provision HTTPS certificates and
+	// use `tailscale serve` to expose local services to the tailnet.
+	if cfg.Serve.Enabled {
+		capMap[tailcfg.CapabilityHTTPS] = []tailcfg.RawMessage{}
+	}
+
+	// Enable Funnel capabilities when Funnel is enabled.
+	// Funnel extends Serve to expose services publicly over the internet.
+	if cfg.Funnel.Enabled {
+		capMap[tailcfg.NodeAttrFunnel] = []tailcfg.RawMessage{}
+
+		// Set allowed Funnel ports. The Tailscale client reads these from
+		// the CapMap key URL (parsed via url.Parse in CheckFunnelPort).
+		ports := cfg.Funnel.AllowedPorts
+		if len(ports) == 0 {
+			ports = DefaultFunnelPorts()
+		}
+
+		portStrs := make([]string, len(ports))
+		for i, p := range ports {
+			portStrs[i] = strconv.FormatUint(uint64(p), 10)
+		}
+
+		funnelPortsCap := tailcfg.NodeCapability(
+			string(tailcfg.CapabilityFunnelPorts) +
+				"?ports=" + strings.Join(portStrs, ","),
+		)
+		capMap[funnelPortsCap] = []tailcfg.RawMessage{}
+	}
+
 	tNode := tailcfg.Node{
 		//nolint:gosec // G115: NodeID values are within int64 range
 		ID:       tailcfg.NodeID(nv.ID()),

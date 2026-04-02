@@ -104,6 +104,11 @@ type Headscale struct {
 	authProvider   AuthProvider
 	mapBatcher     *mapper.Batcher
 
+	// acmeChallenges stores ACME DNS-01 challenge TXT records created
+	// by Tailscale clients via POST /machine/set-dns for TLS cert
+	// provisioning (tailscale serve HTTPS).
+	acmeChallenges *dns.ACMEChallengeStore
+
 	clientStreamsOpen sync.WaitGroup
 }
 
@@ -138,6 +143,7 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 		noisePrivateKey:   noisePrivateKey,
 		clientStreamsOpen: sync.WaitGroup{},
 		state:             s,
+		acmeChallenges:    dns.NewACMEChallengeStore(),
 	}
 
 	// Initialize ephemeral garbage collector

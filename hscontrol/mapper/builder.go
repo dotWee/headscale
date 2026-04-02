@@ -193,6 +193,14 @@ func (b *MapResponseBuilder) WithPacketFilters() *MapResponseBuilder {
 		return b
 	}
 
+	// When Funnel is enabled, inject an ingress CapGrant that grants
+	// PeerCapabilityIngress to this node. This is a server-generated
+	// companion capability (same pattern as drive-sharer and relay-target)
+	// that allows the node to receive ingress traffic from the internet.
+	if b.mapper.cfg.Funnel.Enabled {
+		filter = appendIngressCapGrant(filter, node)
+	}
+
 	// CapVer 81: 2023-11-17: MapResponse.PacketFilters (incremental packet filter updates)
 	// Currently, we do not send incremental package filters, however using the
 	// new PacketFilters field and "base" allows us to send a full update when we
@@ -202,6 +210,31 @@ func (b *MapResponseBuilder) WithPacketFilters() *MapResponseBuilder {
 	}
 
 	return b
+}
+
+// appendIngressCapGrant appends a FilterRule that grants PeerCapabilityIngress
+// to the given node. This allows the node to accept Funnel connections.
+func appendIngressCapGrant(
+	filter []tailcfg.FilterRule,
+	node types.NodeView,
+) []tailcfg.FilterRule {
+	dsts := make([]netip.Prefix, 0, len(node.Prefixes()))
+	dsts = append(dsts, node.Prefixes()...)
+
+	if len(dsts) == 0 {
+		return filter
+	}
+
+	return append(filter, tailcfg.FilterRule{
+		CapGrant: []tailcfg.CapGrant{
+			{
+				Dsts: dsts,
+				CapMap: tailcfg.PeerCapMap{
+					tailcfg.PeerCapabilityIngress: nil,
+				},
+			},
+		},
+	})
 }
 
 // WithPeers adds full peer list with policy filtering (for full map response).

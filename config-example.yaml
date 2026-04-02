@@ -433,6 +433,32 @@ taildrop:
   # Tagged devices and cross-user transfers are not permitted by Tailscale clients.
   enabled: true
 
+# Serve configuration
+# Tailscale Serve allows nodes to expose local services (HTTP, HTTPS, TCP) to the tailnet.
+# Nodes can use `tailscale serve` to proxy local services to other tailnet members.
+# https://tailscale.com/kb/1312/serve/
+serve:
+  # Enable or disable Tailscale Serve for all nodes.
+  # When enabled, HTTPS certificate provisioning is made available and
+  # nodes can use `tailscale serve` to expose local services.
+  enabled: true
+
+# Funnel configuration
+# Tailscale Funnel extends Serve to expose services publicly over the internet.
+# https://tailscale.com/kb/1223/funnel/
+funnel:
+  # Enable or disable Tailscale Funnel for all nodes.
+  # When enabled, nodes can use `tailscale funnel` to expose services to the internet.
+  # Requires serve to also be enabled.
+  # SECURITY NOTE: Funnel exposes services to the public internet.
+  enabled: false
+  # Ports allowed for Funnel. Clients will only be able to use Funnel on these ports.
+  # Default: [443, 8443, 10000]
+  # allowed_ports:
+  #   - 443
+  #   - 8443
+  #   - 10000
+
 # Advanced performance tuning parameters.
 # The defaults are carefully chosen and should rarely need adjustment.
 # Only modify these if you have identified a specific performance issue.
